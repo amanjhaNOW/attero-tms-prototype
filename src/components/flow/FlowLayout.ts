@@ -107,15 +107,17 @@ function layoutDirect(
 
   if (sh) {
     const deliverStop = stops.find((s) => s.shipmentId === sh.id && s.type === 'DELIVER');
-    edges.push({
-      id: `edge-ship-${sh.id}-dest`,
-      fromNodeId: `shipment-${sh.id}`,
-      toNodeId: 'destination',
-      status: edgeStatus(sh),
-      stopId: deliverStop?.id,
-      shipmentId: sh.id,
-      stopType: 'DELIVER',
-    });
+    if (deliverStop) {
+      edges.push({
+        id: `edge-ship-${sh.id}-dest`,
+        fromNodeId: `shipment-${sh.id}`,
+        toNodeId: 'destination',
+        status: edgeStatus(sh),
+        stopId: deliverStop.id,
+        shipmentId: sh.id,
+        stopType: 'DELIVER',
+      });
+    }
   }
 
   return { nodes, edges, columns: 3, maxRows: 1 };
@@ -196,15 +198,17 @@ function layoutMilkRun(
   // Each shipment → destination
   shipments.forEach((sh) => {
     const deliverStop = stops.find((s) => s.shipmentId === sh.id && s.type === 'DELIVER');
-    edges.push({
-      id: `edge-ship-${sh.id}-dest`,
-      fromNodeId: `shipment-${sh.id}`,
-      toNodeId: 'destination',
-      status: edgeStatus(sh),
-      stopId: deliverStop?.id,
-      shipmentId: sh.id,
-      stopType: 'DELIVER',
-    });
+    if (deliverStop) {
+      edges.push({
+        id: `edge-ship-${sh.id}-dest`,
+        fromNodeId: `shipment-${sh.id}`,
+        toNodeId: 'destination',
+        status: edgeStatus(sh),
+        stopId: deliverStop.id,
+        shipmentId: sh.id,
+        stopType: 'DELIVER',
+      });
+    }
   });
 
   return { nodes, edges, columns: 3, maxRows: Math.max(maxRows, 1) };
@@ -276,15 +280,17 @@ function layoutMultiVehicle(
       });
     }
     const deliverStop = stops.find((s) => s.shipmentId === sh.id && s.type === 'DELIVER');
-    edges.push({
-      id: `edge-ship-${sh.id}-dest`,
-      fromNodeId: `shipment-${sh.id}`,
-      toNodeId: 'destination',
-      status: edgeStatus(sh),
-      stopId: deliverStop?.id,
-      shipmentId: sh.id,
-      stopType: 'DELIVER',
-    });
+    if (deliverStop) {
+      edges.push({
+        id: `edge-ship-${sh.id}-dest`,
+        fromNodeId: `shipment-${sh.id}`,
+        toNodeId: 'destination',
+        status: edgeStatus(sh),
+        stopId: deliverStop.id,
+        shipmentId: sh.id,
+        stopType: 'DELIVER',
+      });
+    }
   });
 
   return { nodes, edges, columns: 3, maxRows: Math.max(shipCount, 1) };
