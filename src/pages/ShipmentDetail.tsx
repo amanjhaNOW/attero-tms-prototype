@@ -41,11 +41,11 @@ export function ShipmentDetail() {
 
   const [expandedCompleted, setExpandedCompleted] = useState<Set<string>>(new Set());
 
-  // ── Pickup form state ──────────────────
-  const [actualItems, setActualItems] = useState<
-    { material: string; qty: number; unit: string; invoiceNumber: string; remarks: string }[]
-  >([]);
-  const [pickupInitialized, setPickupInitialized] = useState<string | null>(null);
+  // ── Per-stop actual items state (keyed by stop ID) ──────
+  const [stopActualItems, setStopActualItems] = useState<
+    Record<string, { material: string; qty: number; unit: string; invoiceNumber: string; remarks: string }[]>
+  >({});
+  const [initializedStops, setInitializedStops] = useState<Set<string>>(new Set());
 
   // ── Delivery form state ────────────────
   const [weights, setWeights] = useState<{
@@ -83,12 +83,24 @@ export function ShipmentDetail() {
   }
 
   const load = loads.find((l) => l.id === shipment.loadId);
+  const isMilkRun = load?.patternLabel === 'milk_run';
+  const pickupStops = stops.filter((s) => s.type === 'PICKUP');
+  const deliverStops = stops.filter((s) => s.type === 'DELIVER');
+  const allPickupsCompleted = pickupStops.every((s) => s.status === 'completed');
 
-  // Find the active (next pending) stop
-  const activeStop = stops.find((s) => s.status === 'pending');
+  // Find the active (next pending) stop — with milk run logic
+  // For milk run: next PICKUP that's pending, or if all pickups done, next pending DELIVER
+  const activeStop = (() => {
+    const nextPendingPickup = pickupStops.find((s) => s.status === 'pending');
+    if (nextPendingPickup) return nextPendingPickup;
+    if (allPickupsCompleted) {
+      return deliverStops.find((s) => s.status === 'pending');
+    }
+    return stops.find((s) => s.status === 'pending');
+  })();
 
-  // Initialize pickup actual items from planned if not done yet
-  if (activeStop && activeStop.type === 'PICKUP' && pickupInitialized !== activeStop.id) {
+  // Initialize actual items for the active stop if not done yet
+  if (activeStop && activeStop.type === 'PICKUP' && !initializedStops.has(activeStop.id)) {
     const initial = activeStop.plannedItems.map((item) => ({
       material: item.material,
       qty: item.qty,
@@ -96,8 +108,8 @@ export function ShipmentDetail() {
       invoiceNumber: '',
       remarks: '',
     }));
-    setActualItems(initial);
-    setPickupInitialized(activeStop.id);
+    setStopActualItems((prev) => ({ ...prev, [activeStop.id]: initial }));
+    setInitializedStops((prev) => new Set(prev).add(activeStop.id));
   }
 
   const handleDispatch = useCallback(() => {
@@ -108,7 +120,8 @@ export function ShipmentDetail() {
 
   const handleCompletePickup = useCallback(
     (stopId: string) => {
-      const items: StopItem[] = actualItems
+      const items = stopActualItems[stopId] ?? [];
+      const stopItems: StopItem[] = items
         .filter((i) => i.material && i.qty > 0)
         .map((i) => ({
           material: i.material,
@@ -117,30 +130,43 @@ export function ShipmentDetail() {
           invoiceNumber: i.invoiceNumber || undefined,
           remarks: i.remarks || undefined,
         }));
-      completeStop(stopId, items);
-      setPickupInitialized(null);
+      completeStop(stopId, stopItems);
+      // Clear initialized so next pickup can initialize
+      setInitializedStops((prev) => {
+        const next = new Set(prev);
+        next.delete(stopId);
+        return next;
+      });
     },
-    [actualItems]
+    [stopActualItems]
   );
 
   const handleCompleteDelivery = useCallback(
     (stopId: string) => {
-      // Get actual items from the linked pickup stop
-      const stop = stops.find((s) => s.id === stopId);
-      const pickupStop = stop?.linkedStopId
-        ? stops.find((s) => s.id === stop.linkedStopId)
-        : undefined;
+      // For milk run: combine actual items from ALL completed pickup stops
+      const completedPickups = pickupStops.filter((s) => s.status === 'completed' || s.id === stopId);
+      
+      // Re-read stops from store for latest data
+      const freshStops = useStopStore.getState().stops;
+      const allPickupActuals: StopItem[] = [];
+      completedPickups.forEach((ps) => {
+        const freshPickup = freshStops.find((s) => s.id === ps.id);
+        if (freshPickup && freshPickup.actualItems.length > 0) {
+          allPickupActuals.push(...freshPickup.actualItems);
+        } else if (freshPickup) {
+          allPickupActuals.push(...freshPickup.plannedItems);
+        }
+      });
 
-      // Use pickup actuals as delivery actuals (or from the current stop's planned)
-      const deliveryActuals: StopItem[] = pickupStop
-        ? pickupStop.actualItems.length > 0
-          ? pickupStop.actualItems
-          : pickupStop.plannedItems
+      // If no pickup actuals found, fall back to the deliver stop's planned items
+      const stop = freshStops.find((s) => s.id === stopId);
+      const deliveryActuals = allPickupActuals.length > 0
+        ? allPickupActuals
         : stop?.plannedItems ?? [];
 
       completeStop(stopId, deliveryActuals, weights);
     },
-    [weights, stops]
+    [weights, pickupStops]
   );
 
   const handleSkipStop = useCallback(
@@ -194,6 +220,21 @@ export function ShipmentDetail() {
           </div>
         }
       />
+
+      {/* Milk Run indicator banner */}
+      {isMilkRun && (
+        <div className="rounded-lg bg-primary-50 border border-primary-200 px-4 py-3 flex items-center gap-3">
+          <span className="text-lg">🥛</span>
+          <div>
+            <p className="text-sm font-semibold text-primary">Milk Run Shipment</p>
+            <p className="text-xs text-primary-600">
+              {pickupStops.length} pickup stops → 1 delivery. 
+              Completed: {pickupStops.filter((s) => s.status === 'completed').length}/{pickupStops.length} pickups
+              {allPickupsCompleted && ' ✓ All pickups done — ready for delivery'}
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* ── Main Content (2 cols) ──────── */}
@@ -265,36 +306,53 @@ export function ShipmentDetail() {
           <div className="rounded-xl border border-gray-200 bg-card p-5">
             <h3 className="mb-4 text-base font-semibold text-text-primary">
               Stop Timeline
+              {isMilkRun && (
+                <span className="ml-2 text-xs font-normal text-text-muted">
+                  ({pickupStops.length} pickups + {deliverStops.length} delivery)
+                </span>
+              )}
             </h3>
 
             <div className="space-y-0">
-              {stops.map((stop, index) => (
-                <StopTimelineNode
-                  key={stop.id}
-                  stop={stop}
-                  isLast={index === stops.length - 1}
-                  isActive={activeStop?.id === stop.id}
-                  isExpanded={expandedCompleted.has(stop.id)}
-                  onToggle={() => toggleCompleted(stop.id)}
-                  // Pickup props
-                  actualItems={actualItems}
-                  onActualItemsChange={setActualItems}
-                  onCompletePickup={() => handleCompletePickup(stop.id)}
-                  // Delivery props
-                  weights={weights}
-                  onWeightsChange={setWeights}
-                  onCompleteDelivery={() => handleCompleteDelivery(stop.id)}
-                  // Skip
-                  onSkip={() => handleSkipStop(stop.id)}
-                  // PR context
-                  linkedPR={prs.find((pr) => pr.id === stop.prId)}
-                  linkedPickupStop={
-                    stop.linkedStopId
-                      ? stops.find((s) => s.id === stop.linkedStopId)
-                      : undefined
-                  }
-                />
-              ))}
+              {stops.map((stop, index) => {
+                const isActiveStop = activeStop?.id === stop.id;
+                // For milk run DELIVER: only active if ALL pickups completed
+                const isDeliverBlocked =
+                  stop.type === 'DELIVER' && !allPickupsCompleted && stop.status === 'pending';
+
+                return (
+                  <StopTimelineNode
+                    key={stop.id}
+                    stop={stop}
+                    isLast={index === stops.length - 1}
+                    isActive={isActiveStop && !isDeliverBlocked}
+                    isBlocked={isDeliverBlocked}
+                    isExpanded={expandedCompleted.has(stop.id)}
+                    onToggle={() => toggleCompleted(stop.id)}
+                    // Pickup props
+                    actualItems={stopActualItems[stop.id] ?? []}
+                    onActualItemsChange={(items) =>
+                      setStopActualItems((prev) => ({ ...prev, [stop.id]: items }))
+                    }
+                    onCompletePickup={() => handleCompletePickup(stop.id)}
+                    // Delivery props
+                    weights={weights}
+                    onWeightsChange={setWeights}
+                    onCompleteDelivery={() => handleCompleteDelivery(stop.id)}
+                    // Skip
+                    onSkip={() => handleSkipStop(stop.id)}
+                    // PR context
+                    linkedPR={prs.find((pr) => pr.id === stop.prId)}
+                    linkedPickupStop={
+                      stop.linkedStopId
+                        ? stops.find((s) => s.id === stop.linkedStopId)
+                        : undefined
+                    }
+                    allPickupStops={pickupStops}
+                    isMilkRun={isMilkRun}
+                  />
+                );
+              })}
             </div>
           </div>
         </div>
@@ -356,7 +414,7 @@ export function ShipmentDetail() {
               Pickup Requests
             </h3>
             <div className="space-y-2">
-              {[...new Set(stops.map((s) => s.prId))]
+              {[...new Set(stops.filter((s) => s.prId).map((s) => s.prId))]
                 .map((prId) => prs.find((p) => p.id === prId))
                 .filter(Boolean)
                 .map((pr) => (
@@ -388,6 +446,7 @@ interface StopTimelineNodeProps {
   stop: Stop;
   isLast: boolean;
   isActive: boolean;
+  isBlocked?: boolean;
   isExpanded: boolean;
   onToggle: () => void;
   actualItems: { material: string; qty: number; unit: string; invoiceNumber: string; remarks: string }[];
@@ -399,12 +458,15 @@ interface StopTimelineNodeProps {
   onSkip: () => void;
   linkedPR?: { id: string; clientName: string; materials: { type: string; plannedQty: number; unit: string }[] };
   linkedPickupStop?: Stop;
+  allPickupStops?: Stop[];
+  isMilkRun?: boolean;
 }
 
 function StopTimelineNode({
   stop,
   isLast,
   isActive,
+  isBlocked = false,
   isExpanded,
   onToggle,
   actualItems,
@@ -414,17 +476,22 @@ function StopTimelineNode({
   onWeightsChange,
   onCompleteDelivery,
   onSkip,
+  linkedPR,
   linkedPickupStop,
+  allPickupStops,
+  isMilkRun,
 }: StopTimelineNodeProps) {
   const isCompleted = stop.status === 'completed';
   const isSkipped = stop.status === 'skipped';
-  const isPending = stop.status === 'pending' && !isActive;
+  const isPending = stop.status === 'pending' && !isActive && !isBlocked;
 
   // Dot color
   const dotClass = isCompleted
     ? 'bg-success-100 border-success text-success'
     : isActive
     ? 'bg-primary-100 border-primary text-primary'
+    : isBlocked
+    ? 'bg-orange-50 border-orange-300 text-orange-400'
     : isSkipped
     ? 'bg-gray-100 border-gray-300 text-gray-400'
     : 'bg-gray-100 border-gray-200 text-gray-400';
@@ -454,13 +521,15 @@ function StopTimelineNode({
       {/* Content */}
       <div
         className={`flex-1 pb-6 ${isLast ? 'pb-0' : ''} ${
-          isPending ? 'opacity-50' : ''
+          isPending || isBlocked ? 'opacity-50' : ''
         }`}
       >
         <div
           className={`rounded-lg border p-4 ${
             isActive
               ? 'border-primary-300 bg-primary-50/30 shadow-sm'
+              : isBlocked
+              ? 'border-orange-200 bg-orange-50/20'
               : isCompleted
               ? 'border-gray-200 bg-white cursor-pointer hover:bg-gray-50'
               : 'border-gray-200 bg-gray-50/50'
@@ -474,6 +543,12 @@ function StopTimelineNode({
                 Stop {stop.sequence} — {stop.type}
               </span>
               <StatusBadge status={stop.status} />
+              {/* Show client name for PICKUP stops */}
+              {stop.type === 'PICKUP' && linkedPR && (
+                <span className="text-xs font-medium text-primary bg-primary-50 rounded-full px-2 py-0.5">
+                  {linkedPR.clientName}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               {stop.completedAt && (
@@ -498,6 +573,20 @@ function StopTimelineNode({
 
           <p className="font-medium text-text-primary">{stop.location.name}</p>
           <p className="text-sm text-text-muted">{stop.location.address}</p>
+
+          {/* Blocked message for DELIVER when pickups not done */}
+          {isBlocked && (
+            <div className="mt-3 rounded-lg bg-orange-50 border border-orange-200 p-3">
+              <p className="text-xs font-medium text-orange-600">
+                ⏳ Waiting for all pickups to complete before delivery can begin
+              </p>
+              {allPickupStops && (
+                <p className="text-xs text-orange-500 mt-1">
+                  {allPickupStops.filter((s) => s.status === 'completed').length}/{allPickupStops.length} pickups completed
+                </p>
+              )}
+            </div>
+          )}
 
           {/* ── COMPLETED STOP ──────────── */}
           {isCompleted && !isExpanded && (
@@ -605,23 +694,40 @@ function StopTimelineNode({
           {/* ── ACTIVE DELIVER STOP ────── */}
           {isActive && stop.type === 'DELIVER' && (
             <div className="mt-4 space-y-4">
-              {/* Material summary from pickup */}
+              {/* Material summary from pickup(s) */}
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-2">
-                  Material from Pickup
+                  {isMilkRun ? 'Combined Material from All Pickups' : 'Material from Pickup'}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {(linkedPickupStop?.actualItems.length
-                    ? linkedPickupStop.actualItems
-                    : stop.plannedItems
-                  ).map((item, i) => (
-                    <span
-                      key={i}
-                      className="rounded-full bg-primary-50 px-2.5 py-0.5 text-xs font-medium text-primary-600"
-                    >
-                      {item.material}: {item.qty.toLocaleString()} {item.unit}
-                    </span>
-                  ))}
+                  {isMilkRun && allPickupStops ? (
+                    // Show combined actuals from all pickup stops
+                    allPickupStops.flatMap((ps) =>
+                      (ps.actualItems.length > 0 ? ps.actualItems : ps.plannedItems).map(
+                        (item, i) => (
+                          <span
+                            key={`${ps.id}-${i}`}
+                            className="rounded-full bg-primary-50 px-2.5 py-0.5 text-xs font-medium text-primary-600"
+                          >
+                            {item.material}: {item.qty.toLocaleString()} {item.unit}
+                          </span>
+                        )
+                      )
+                    )
+                  ) : (
+                    // Direct: show from linked pickup stop
+                    (linkedPickupStop?.actualItems.length
+                      ? linkedPickupStop.actualItems
+                      : stop.plannedItems
+                    ).map((item, i) => (
+                      <span
+                        key={i}
+                        className="rounded-full bg-primary-50 px-2.5 py-0.5 text-xs font-medium text-primary-600"
+                      >
+                        {item.material}: {item.qty.toLocaleString()} {item.unit}
+                      </span>
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -657,7 +763,7 @@ function StopTimelineNode({
           )}
 
           {/* ── PENDING (inactive) ─────── */}
-          {isPending && (
+          {isPending && !isBlocked && (
             <div className="mt-2 flex flex-wrap gap-2">
               {stop.plannedItems.map((item, i) => (
                 <span

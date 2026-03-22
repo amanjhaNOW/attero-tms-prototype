@@ -10,6 +10,10 @@ import type { StopItem, Stop } from '@/types';
  * Direct Shipment cascade:
  *   Complete PICKUP → PR "picked_up"
  *   Complete DELIVER → Shipment "completed" → Load "completed" → PR "closed"
+ * 
+ * Milk Run cascade:
+ *   Complete PICKUP N → that specific PR "picked_up"
+ *   Complete DELIVER (after ALL pickups) → Shipment "completed" → Load "completed" → ALL PRs "closed"
  */
 
 export function completeStop(
@@ -49,7 +53,7 @@ export function completeStop(
     prStore.updatePR(stop.prId, { status: 'picked_up' });
   }
 
-  // 3. If DELIVER: update PR to 'delivered', then check for close
+  // 3. If DELIVER (direct with single prId): update PR to 'delivered'
   if (stop.type === 'DELIVER' && stop.prId) {
     prStore.updatePR(stop.prId, { status: 'delivered' });
   }
@@ -77,7 +81,7 @@ export function completeStop(
           (s) => s.id === shipment.id ? true : s.status === 'completed'
         );
 
-        // Calculate total actual qty for the load
+        // Calculate total actual qty for the load from DELIVER stops
         const allLoadStops = useStopStore.getState().stops.filter((s) => {
           const sh = useShipmentStore.getState().getShipmentById(s.shipmentId);
           return sh && sh.loadId === shipment.loadId;
@@ -95,7 +99,7 @@ export function completeStop(
         if (allShipmentsCompleted) {
           loadStore.updateLoad(shipment.loadId, { status: 'completed' });
 
-          // 6. Close all PRs in this load
+          // 6. Close ALL PRs in this load
           load.prIds.forEach((prId) => {
             prStore.updatePR(prId, { status: 'closed' });
           });

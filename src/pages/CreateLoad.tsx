@@ -61,13 +61,17 @@ export function CreateLoad() {
       type: destinationLoc.type as 'plant' | 'warehouse',
     };
 
-    // For each selected PR, create PICKUP + DELIVER stops
+    // For milk run: N PICKUP stops + 1 DELIVER stop
+    // For direct (1 PR): 1 PICKUP + 1 DELIVER (same as before)
     const stopIdsForShipment: string[] = [];
+    const pickupStopIds: string[] = [];
     let seq = 1;
+
+    // Create PICKUP stops (one per PR)
     selectedPRs.forEach((pr) => {
       const pickupStopId = `STOP-${String(stops.length + seq).padStart(3, '0')}`;
-      const deliverStopId = `STOP-${String(stops.length + seq + 1).padStart(3, '0')}`;
-      stopIdsForShipment.push(pickupStopId, deliverStopId);
+      stopIdsForShipment.push(pickupStopId);
+      pickupStopIds.push(pickupStopId);
 
       addStop({
         id: pickupStopId,
@@ -92,31 +96,39 @@ export function CreateLoad() {
         status: 'pending',
       });
 
-      addStop({
-        id: deliverStopId,
-        shipmentId: shipId,
-        sequence: seq + 1,
-        type: 'DELIVER',
-        location: {
-          name: dest.name,
-          state: dest.state,
-          city: dest.city,
-          pin: dest.pin,
-          address: dest.address,
-        },
-        prId: pr.id,
-        plannedItems: pr.materials.map((m) => ({
-          material: m.type,
-          qty: m.plannedQty,
-          unit: m.unit,
-        })),
-        actualItems: [],
-        totalActualQty: 0,
-        linkedStopId: pickupStopId,
-        status: 'pending',
-      });
+      seq += 1;
+    });
 
-      seq += 2;
+    // Create 1 DELIVER stop at destination with ALL materials combined
+    const deliverStopId = `STOP-${String(stops.length + seq).padStart(3, '0')}`;
+    stopIdsForShipment.push(deliverStopId);
+
+    const allPlannedItems = selectedPRs.flatMap((pr) =>
+      pr.materials.map((m) => ({
+        material: m.type,
+        qty: m.plannedQty,
+        unit: m.unit,
+      }))
+    );
+
+    addStop({
+      id: deliverStopId,
+      shipmentId: shipId,
+      sequence: seq,
+      type: 'DELIVER',
+      location: {
+        name: dest.name,
+        state: dest.state,
+        city: dest.city,
+        pin: dest.pin,
+        address: dest.address,
+      },
+      prId: selectedPRs.length === 1 ? selectedPRs[0].id : '',
+      plannedItems: allPlannedItems,
+      actualItems: [],
+      totalActualQty: 0,
+      linkedStopId: pickupStopIds[0],
+      status: 'pending',
     });
 
     // Create shipment
