@@ -1,4 +1,4 @@
-import { forwardRef } from 'react';
+import { forwardRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { X, Truck, MapPin } from 'lucide-react';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -10,6 +10,60 @@ interface FlowNodeProps {
   onClick?: () => void;
   selected?: boolean;
   onRemove?: () => void;
+  /** Called when user clicks the output port (right side) to start a connection */
+  onStartConnect?: (nodeId: string) => void;
+  /** Called when user clicks the input port (left side) to complete a connection */
+  onCompleteConnect?: (nodeId: string) => void;
+  /** Whether any connection is currently in progress */
+  isConnecting?: boolean;
+  /** Whether this node is the source of the active connection */
+  isConnectSource?: boolean;
+  /** Whether this node is a valid target for the active connection */
+  isValidTarget?: boolean;
+}
+
+/* ─── Connection Port ────────────────────────── */
+function ConnectionPort({
+  side,
+  onClick,
+  isActive,
+  isValidTarget,
+  isConnecting,
+}: {
+  side: 'left' | 'right';
+  onClick: () => void;
+  isActive?: boolean;
+  isValidTarget?: boolean;
+  isConnecting?: boolean;
+}) {
+  const isLeft = side === 'left';
+
+  // Determine visual state
+  let portClasses = 'border-gray-300 bg-white hover:border-primary hover:bg-primary-50';
+  if (isActive) {
+    portClasses = 'border-primary bg-primary animate-pulse';
+  } else if (isValidTarget) {
+    portClasses = 'border-primary bg-primary-100 shadow-[0_0_6px_rgba(25,118,210,0.4)]';
+  } else if (isConnecting && !isValidTarget) {
+    portClasses = 'border-gray-200 bg-gray-100 opacity-40';
+  }
+
+  return (
+    <div
+      className={`absolute top-1/2 -translate-y-1/2 z-10 ${
+        isLeft ? 'left-0 -translate-x-1/2' : 'right-0 translate-x-1/2'
+      }`}
+    >
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        className={`w-3 h-3 rounded-full border-2 transition-all duration-150 cursor-pointer ${portClasses}`}
+        title={isLeft ? 'Connect here' : 'Connect from here'}
+      />
+    </div>
+  );
 }
 
 /* ─── Source Node ─────────────────────────────── */
@@ -193,9 +247,37 @@ function DestinationCard({
 
 /* ─── Composite FlowNode ─────────────────────── */
 export const FlowNode = forwardRef<HTMLDivElement, FlowNodeProps>(
-  ({ nodeData, onClick, selected, onRemove }, ref) => {
+  (
+    {
+      nodeData,
+      onClick,
+      selected,
+      onRemove,
+      onStartConnect,
+      onCompleteConnect,
+      isConnecting,
+      isConnectSource,
+      isValidTarget,
+    },
+    ref,
+  ) => {
+    const nodeId = nodeData.id;
+    const nodeType = nodeData.type;
+
+    // Determine which ports to show
+    const hasOutputPort = nodeType === 'source' || nodeType === 'shipment';
+    const hasInputPort = nodeType === 'shipment' || nodeType === 'destination';
+
+    const handleStartConnect = useCallback(() => {
+      onStartConnect?.(nodeId);
+    }, [onStartConnect, nodeId]);
+
+    const handleCompleteConnect = useCallback(() => {
+      onCompleteConnect?.(nodeId);
+    }, [onCompleteConnect, nodeId]);
+
     const renderInner = () => {
-      switch (nodeData.type) {
+      switch (nodeType) {
         case 'source': {
           const pr = nodeData.data.pr as PickupRequest;
           return <SourceCard pr={pr} onRemove={onRemove} />;
@@ -230,8 +312,28 @@ export const FlowNode = forwardRef<HTMLDivElement, FlowNodeProps>(
     };
 
     return (
-      <div ref={ref} className="flex items-center justify-center">
+      <div ref={ref} className="relative flex items-center justify-center">
+        {/* Input port (left side) */}
+        {hasInputPort && onCompleteConnect && (
+          <ConnectionPort
+            side="left"
+            onClick={handleCompleteConnect}
+            isValidTarget={isValidTarget}
+            isConnecting={isConnecting}
+          />
+        )}
+
         {renderInner()}
+
+        {/* Output port (right side) */}
+        {hasOutputPort && onStartConnect && (
+          <ConnectionPort
+            side="right"
+            onClick={handleStartConnect}
+            isActive={isConnectSource}
+            isConnecting={isConnecting}
+          />
+        )}
       </div>
     );
   },

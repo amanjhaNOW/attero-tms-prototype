@@ -8,6 +8,8 @@ interface FlowEdgeProps {
   label?: string;
   /** Trigger re-layout on this value (e.g. a version counter) */
   layoutVersion?: number;
+  /** Called when user clicks the disconnect button */
+  onDisconnect?: () => void;
 }
 
 interface PathCoords {
@@ -38,8 +40,10 @@ export function FlowEdge({
   status,
   label,
   layoutVersion,
+  onDisconnect,
 }: FlowEdgeProps) {
   const [coords, setCoords] = useState<PathCoords | null>(null);
+  const [isHovered, setIsHovered] = useState(false);
 
   const recalc = useCallback(() => {
     const fromEl = fromRef.current;
@@ -79,15 +83,34 @@ export function FlowEdge({
   const labelX = midX;
   const labelY = (fromY + toY) / 2 - 10;
 
+  // Midpoint for disconnect button
+  const disconnectX = midX;
+  const disconnectY = (fromY + toY) / 2;
+
   return (
-    <>
+    <g
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      className="pointer-events-auto"
+    >
+      {/* Fat invisible hit area for easier hovering/clicking */}
       <path
         d={pathD}
         fill="none"
-        stroke={style.stroke}
-        strokeWidth={style.strokeWidth}
+        stroke="transparent"
+        strokeWidth={20}
+        className="cursor-pointer"
+      />
+
+      {/* Visible path */}
+      <path
+        d={pathD}
+        fill="none"
+        stroke={isHovered ? '#1976D2' : style.stroke}
+        strokeWidth={isHovered ? Math.max(style.strokeWidth, 2.5) : style.strokeWidth}
         strokeDasharray={style.dashArray === 'none' ? undefined : style.dashArray}
         strokeLinecap="round"
+        className="transition-all duration-150"
       >
         {style.animate && (
           <animate
@@ -102,11 +125,13 @@ export function FlowEdge({
       <path
         d={arrowD}
         fill="none"
-        stroke={style.stroke}
-        strokeWidth={style.strokeWidth}
+        stroke={isHovered ? '#1976D2' : style.stroke}
+        strokeWidth={isHovered ? Math.max(style.strokeWidth, 2.5) : style.strokeWidth}
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+
+      {/* Label at midpoint */}
       {label && (
         <g>
           <rect
@@ -130,6 +155,37 @@ export function FlowEdge({
           </text>
         </g>
       )}
-    </>
+
+      {/* Disconnect button at midpoint (shown on hover) */}
+      {isHovered && onDisconnect && (
+        <g
+          transform={`translate(${disconnectX}, ${disconnectY + (label ? 14 : 0)})`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDisconnect();
+          }}
+          className="cursor-pointer"
+        >
+          <circle
+            r={10}
+            fill="white"
+            stroke="#dc2626"
+            strokeWidth={1.5}
+            className="drop-shadow-sm"
+          />
+          <text
+            x={0}
+            y={1}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={12}
+            fontWeight="bold"
+            fill="#dc2626"
+          >
+            ✕
+          </text>
+        </g>
+      )}
+    </g>
   );
 }

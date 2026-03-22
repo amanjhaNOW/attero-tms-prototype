@@ -467,6 +467,37 @@ export function addStopToShipment(
     shipmentStore.updateShipment(shipmentId, {
       stopIds: [...shipment.stopIds, newStopId],
     });
+  } else if (type === 'DELIVER') {
+    // Create a DELIVER stop at the load's destination
+    const load = loadStore.getLoadById(shipment.loadId);
+    const deliverLocation = load
+      ? { ...load.destination }
+      : { name: 'Destination', state: '', city: '', pin: '', address: '' };
+
+    // Aggregate planned items from all PICKUP stops on this shipment
+    const pickupStops = shipStops.filter((s) => s.type === 'PICKUP');
+    const allPlannedItems = pickupStops.flatMap((s) =>
+      s.plannedItems.map((item) => ({ ...item })),
+    );
+
+    const deliverSeq = shipStops.length + 1; // DELIVER goes at the end
+    stopStore.addStop({
+      id: newStopId,
+      shipmentId,
+      sequence: deliverSeq,
+      type: 'DELIVER',
+      location: deliverLocation,
+      prId: prId ?? '',
+      plannedItems: allPlannedItems,
+      actualItems: [],
+      totalActualQty: 0,
+      linkedStopId: pickupStops[0]?.id,
+      status: 'pending',
+    });
+
+    shipmentStore.updateShipment(shipmentId, {
+      stopIds: [...shipment.stopIds, newStopId],
+    });
   } else if ((type === 'TRANSFER_OUT' || type === 'TRANSFER_IN') && linkedShipmentId) {
     const linkedShipment = shipmentStore.getShipmentById(linkedShipmentId);
     if (!linkedShipment) return;

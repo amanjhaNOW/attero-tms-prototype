@@ -18,6 +18,14 @@ export interface FlowEdgeData {
   toNodeId: string;
   label?: string;
   status: 'pending' | 'active' | 'completed';
+  /** The stop ID that this edge represents (for disconnect) */
+  stopId?: string;
+  /** The PR ID linked to this edge (for source→shipment edges) */
+  prId?: string;
+  /** Shipment ID that owns the stop */
+  shipmentId?: string;
+  /** Type of stop this edge represents */
+  stopType?: 'PICKUP' | 'DELIVER' | 'TRANSFER_IN' | 'TRANSFER_OUT';
 }
 
 export interface FlowLayoutResult {
@@ -86,15 +94,23 @@ function layoutDirect(
       toNodeId: `shipment-${sh.id}`,
       label: `${(qty / 1000).toFixed(1)}T`,
       status: edgeStatus(sh),
+      stopId: pickupStop?.id,
+      prId: pr.id,
+      shipmentId: sh.id,
+      stopType: 'PICKUP',
     });
   }
 
   if (sh) {
+    const deliverStop = stops.find((s) => s.shipmentId === sh.id && s.type === 'DELIVER');
     edges.push({
       id: `edge-ship-${sh.id}-dest`,
       fromNodeId: `shipment-${sh.id}`,
       toNodeId: 'destination',
       status: edgeStatus(sh),
+      stopId: deliverStop?.id,
+      shipmentId: sh.id,
+      stopType: 'DELIVER',
     });
   }
 
@@ -164,6 +180,10 @@ function layoutMilkRun(
           toNodeId: `shipment-${sh.id}`,
           label: `${(qty / 1000).toFixed(1)}T`,
           status: edgeStatus(sh),
+          stopId: pickupStop.id,
+          prId: pr.id,
+          shipmentId: sh.id,
+          stopType: 'PICKUP',
         });
       }
     });
@@ -171,11 +191,15 @@ function layoutMilkRun(
 
   // Each shipment → destination
   shipments.forEach((sh) => {
+    const deliverStop = stops.find((s) => s.shipmentId === sh.id && s.type === 'DELIVER');
     edges.push({
       id: `edge-ship-${sh.id}-dest`,
       fromNodeId: `shipment-${sh.id}`,
       toNodeId: 'destination',
       status: edgeStatus(sh),
+      stopId: deliverStop?.id,
+      shipmentId: sh.id,
+      stopType: 'DELIVER',
     });
   });
 
@@ -241,13 +265,21 @@ function layoutMultiVehicle(
         toNodeId: `shipment-${sh.id}`,
         label: qty > 0 ? `${(qty / 1000).toFixed(1)}T` : undefined,
         status: edgeStatus(sh),
+        stopId: pickupStop?.id,
+        prId: pr.id,
+        shipmentId: sh.id,
+        stopType: 'PICKUP',
       });
     }
+    const deliverStop = stops.find((s) => s.shipmentId === sh.id && s.type === 'DELIVER');
     edges.push({
       id: `edge-ship-${sh.id}-dest`,
       fromNodeId: `shipment-${sh.id}`,
       toNodeId: 'destination',
       status: edgeStatus(sh),
+      stopId: deliverStop?.id,
+      shipmentId: sh.id,
+      stopType: 'DELIVER',
     });
   });
 
@@ -338,40 +370,65 @@ function layoutCrossDock(
       return fStops.some((s) => s.prId === pr.id);
     });
     if (feeder) {
+      const pickupStop = stops.find(
+        (s) => s.shipmentId === feeder.id && s.type === 'PICKUP' && s.prId === pr.id,
+      );
       edges.push({
         id: `edge-source-${pr.id}-ship-${feeder.id}`,
         fromNodeId: `source-${pr.id}`,
         toNodeId: `shipment-${feeder.id}`,
         status: edgeStatus(feeder),
+        stopId: pickupStop?.id,
+        prId: pr.id,
+        shipmentId: feeder.id,
+        stopType: 'PICKUP',
       });
     }
   });
 
   // Edges: feeder → hub
   feeders.forEach((f) => {
+    const transferOutStop = stops.find(
+      (s) => s.shipmentId === f.id && s.type === 'TRANSFER_OUT',
+    );
     edges.push({
       id: `edge-ship-${f.id}-hub`,
       fromNodeId: `shipment-${f.id}`,
       toNodeId: 'hub',
       status: edgeStatus(f),
+      stopId: transferOutStop?.id,
+      shipmentId: f.id,
+      stopType: 'TRANSFER_OUT',
     });
   });
 
   // Edge: hub → line-haul
   if (lineHaul) {
+    const transferInStop = stops.find(
+      (s) => s.shipmentId === lineHaul.id && s.type === 'TRANSFER_IN',
+    );
     edges.push({
       id: `edge-hub-ship-${lineHaul.id}`,
       fromNodeId: 'hub',
       toNodeId: `shipment-${lineHaul.id}`,
       status: edgeStatus(lineHaul),
+      stopId: transferInStop?.id,
+      shipmentId: lineHaul.id,
+      stopType: 'TRANSFER_IN',
     });
 
     // Edge: line-haul → destination
+    const deliverStop = stops.find(
+      (s) => s.shipmentId === lineHaul.id && s.type === 'DELIVER',
+    );
     edges.push({
       id: `edge-ship-${lineHaul.id}-dest`,
       fromNodeId: `shipment-${lineHaul.id}`,
       toNodeId: 'destination',
       status: edgeStatus(lineHaul),
+      stopId: deliverStop?.id,
+      shipmentId: lineHaul.id,
+      stopType: 'DELIVER',
     });
   }
 
