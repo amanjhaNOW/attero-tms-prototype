@@ -544,8 +544,8 @@ export const mockPickupRequests: PickupRequest[] = [
       { type: 'E-waste', plannedQty: 6000, unit: 'Kg' },
     ],
     tentativePickupDate: '2026-03-30',
-    status: 'pending',
-    loadIds: [],
+    status: 'planned',
+    loadIds: ['LOAD-011'],
     createdAt: '2026-03-25T10:00:00Z',
   },
   {
@@ -572,8 +572,8 @@ export const mockPickupRequests: PickupRequest[] = [
       { type: 'Mixed Metals', plannedQty: 7500, unit: 'Kg' },
     ],
     tentativePickupDate: '2026-04-04',
-    status: 'pending',
-    loadIds: [],
+    status: 'planned',
+    loadIds: ['LOAD-011'],
     createdAt: '2026-03-26T11:00:00Z',
   },
   {
@@ -601,8 +601,8 @@ export const mockPickupRequests: PickupRequest[] = [
       { type: 'Copper', plannedQty: 5000, unit: 'Kg' },
     ],
     tentativePickupDate: '2026-04-06',
-    status: 'pending',
-    loadIds: [],
+    status: 'planned',
+    loadIds: ['LOAD-011'],
     createdAt: '2026-03-27T08:30:00Z',
   },
   {
@@ -630,8 +630,8 @@ export const mockPickupRequests: PickupRequest[] = [
       { type: 'Aluminium', plannedQty: 2000, unit: 'Kg' },
     ],
     tentativePickupDate: '2026-04-02',
-    status: 'pending',
-    loadIds: [],
+    status: 'planned',
+    loadIds: ['LOAD-011'],
     createdAt: '2026-03-27T09:00:00Z',
   },
 ];

@@ -224,4 +224,24 @@ export const mockLoads: Load[] = [
     status: 'in_execution',
     createdAt: '2026-03-31T08:00:00Z',
   },
+  // ── LOAD-011: Cross-Dock + Milk Run — Wipro, HCL, Reliance, Bajaj Auto ──
+  {
+    id: 'LOAD-011',
+    prIds: ['REQ-00019', 'REQ-00020', 'REQ-00021', 'REQ-00022'],
+    shipmentIds: ['SHP-012', 'SHP-013', 'SHP-014'],
+    destination: {
+      name: 'Attero Recycling Pvt Ltd Haridwar',
+      state: 'Uttarakhand',
+      city: 'Haridwar',
+      pin: '247661',
+      address: 'Plot No. 4, Sector 6, IIE SIDCUL, Haridwar, Uttarakhand 247661',
+      type: 'plant',
+    },
+    totalPlannedQty: 45500,
+    totalActualQty: 0,
+    documents: [],
+    patternLabel: 'cross_dock',
+    status: 'draft',
+    createdAt: '2026-03-23T03:00:00Z',
+  },
 ];
