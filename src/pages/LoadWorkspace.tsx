@@ -11,6 +11,9 @@ import {
   AlertTriangle,
   Package,
   Save,
+  GripVertical,
+  ArrowUp as MoveUp,
+  ArrowDown as MoveDown,
 } from 'lucide-react';
 import { PageHeader, EmptyState, StatusBadge, MetricCard } from '@/components';
 import {
@@ -21,7 +24,7 @@ import {
   useReferenceStore,
   planShipment,
 } from '@/stores';
-import type { Shipment } from '@/types';
+import type { Shipment, Stop } from '@/types';
 
 export function LoadWorkspace() {
   const { id } = useParams<{ id: string }>();
@@ -30,7 +33,8 @@ export function LoadWorkspace() {
     s.shipments.filter((sh) => sh.loadId === id)
   );
   const updateShipment = useShipmentStore((s) => s.updateShipment);
-  const stops = useStopStore((s) => s.stops);
+  const allStops = useStopStore((s) => s.stops);
+  const updateStop = useStopStore((s) => s.updateStop);
   const prs = usePRStore((s) => s.pickupRequests);
   const transporters = useReferenceStore((s) => s.transporters);
   const vehicles = useReferenceStore((s) => s.vehicles);
@@ -89,6 +93,27 @@ export function LoadWorkspace() {
     [shipments]
   );
 
+  // Stop reordering for pickup stops
+  const handleMoveStop = useCallback(
+    (shipmentId: string, stopId: string, direction: 'up' | 'down') => {
+      const shipStops = allStops
+        .filter((s) => s.shipmentId === shipmentId)
+        .sort((a, b) => a.sequence - b.sequence);
+      const pickupStops = shipStops.filter((s) => s.type === 'PICKUP');
+      const idx = pickupStops.findIndex((s) => s.id === stopId);
+      if (idx < 0) return;
+      const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (swapIdx < 0 || swapIdx >= pickupStops.length) return;
+
+      // Swap sequences
+      const seqA = pickupStops[idx].sequence;
+      const seqB = pickupStops[swapIdx].sequence;
+      updateStop(pickupStops[idx].id, { sequence: seqB });
+      updateStop(pickupStops[swapIdx].id, { sequence: seqA });
+    },
+    [allStops, updateStop]
+  );
+
   if (!load) {
     return (
       <div className="space-y-4">
@@ -116,6 +141,8 @@ export function LoadWorkspace() {
       </div>
     );
   }
+
+  const isMilkRun = load.patternLabel === 'milk_run';
 
   const linkedPRs = load.prIds
     .map((prId) => prs.find((pr) => pr.id === prId))
@@ -211,7 +238,16 @@ export function LoadWorkspace() {
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <MetricCard
           label="Pattern"
-          value={load.patternLabel.replace(/_/g, ' ')}
+          value={
+            <span className="flex items-center gap-2">
+              {load.patternLabel.replace(/_/g, ' ')}
+              {isMilkRun && (
+                <span className="rounded-full bg-primary-100 px-2 py-0.5 text-xs font-bold text-primary">
+                  🥛 MILK RUN
+                </span>
+              )}
+            </span>
+          }
         />
         <MetricCard
           label="PRs"
@@ -235,10 +271,10 @@ export function LoadWorkspace() {
           Flow Diagram
         </h3>
         {shipments.map((sh) => {
-          const shipStops = stops
+          const shipStops = allStops
             .filter((s) => s.shipmentId === sh.id)
             .sort((a, b) => a.sequence - b.sequence);
-          const pickupStop = shipStops.find((s) => s.type === 'PICKUP');
+          const pickupStops = shipStops.filter((s) => s.type === 'PICKUP');
           const deliverStop = shipStops.find((s) => s.type === 'DELIVER');
           const isExpanded = expandedShipment === sh.id;
           const edit = getShipmentEdit(sh);
@@ -247,95 +283,29 @@ export function LoadWorkspace() {
 
           return (
             <div key={sh.id} className="mb-4 last:mb-0">
-              {/* Flow line */}
-              <div className="flex items-center gap-3">
-                {/* Client Card */}
-                <div className="flex-1 rounded-lg border border-gray-200 bg-white p-3 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <MapPin className="h-4 w-4 text-warning flex-shrink-0" />
-                    <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
-                      Pickup
-                    </span>
-                  </div>
-                  <p className="text-sm font-medium text-text-primary truncate">
-                    {pickupStop?.location.name ?? 'N/A'}
-                  </p>
-                  <p className="text-xs text-text-muted truncate">
-                    {pickupStop?.location.city}, {pickupStop?.location.state}
-                  </p>
-                  {pickupStop && (
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {pickupStop.plannedItems.map((item, i) => (
-                        <span
-                          key={i}
-                          className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-text-muted"
-                        >
-                          {item.material}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <ArrowRight className="h-5 w-5 text-gray-300 flex-shrink-0" />
-
-                {/* Shipment Card */}
-                <button
-                  onClick={() =>
-                    setExpandedShipment(isExpanded ? null : sh.id)
-                  }
-                  className="flex-1 rounded-lg border-2 border-primary-200 bg-primary-50/50 p-3 text-left transition-colors hover:bg-primary-50 min-w-0"
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      <Truck className="h-4 w-4 text-primary flex-shrink-0" />
-                      <span className="text-sm font-semibold text-primary">
-                        {sh.id}
-                      </span>
-                    </div>
-                    <StatusBadge status={sh.status} />
-                  </div>
-                  {edit.vehicleRegistration ? (
-                    <p className="text-xs text-text-secondary">
-                      🚛 {edit.vehicleRegistration}
-                    </p>
-                  ) : (
-                    <p className="text-xs text-text-muted italic">
-                      No vehicle assigned
-                    </p>
-                  )}
-                  {edit.driverName ? (
-                    <p className="text-xs text-text-secondary">
-                      👤 {edit.driverName}
-                    </p>
-                  ) : (
-                    <p className="text-xs text-text-muted italic">
-                      No driver assigned
-                    </p>
-                  )}
-                  <p className="mt-1 text-[10px] text-primary-400">
-                    Click to {isExpanded ? 'collapse' : 'expand'}
-                  </p>
-                </button>
-
-                <ArrowRight className="h-5 w-5 text-gray-300 flex-shrink-0" />
-
-                {/* Destination Card */}
-                <div className="flex-1 rounded-lg border border-gray-200 bg-white p-3 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <MapPin className="h-4 w-4 text-success flex-shrink-0" />
-                    <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
-                      {load.destination.type === 'plant' ? 'Plant' : 'Warehouse'}
-                    </span>
-                  </div>
-                  <p className="text-sm font-medium text-text-primary truncate">
-                    {deliverStop?.location.name ?? load.destination.name}
-                  </p>
-                  <p className="text-xs text-text-muted truncate">
-                    {load.destination.city}, {load.destination.state}
-                  </p>
-                </div>
-              </div>
+              {/* Flow line — Milk Run vs Direct */}
+              {isMilkRun && pickupStops.length > 1 ? (
+                <MilkRunFlowDiagram
+                  pickupStops={pickupStops}
+                  deliverStop={deliverStop}
+                  shipment={sh}
+                  edit={edit}
+                  isExpanded={isExpanded}
+                  onToggle={() => setExpandedShipment(isExpanded ? null : sh.id)}
+                  load={load}
+                  prs={prs}
+                />
+              ) : (
+                <DirectFlowDiagram
+                  pickupStop={pickupStops[0]}
+                  deliverStop={deliverStop}
+                  shipment={sh}
+                  edit={edit}
+                  isExpanded={isExpanded}
+                  onToggle={() => setExpandedShipment(isExpanded ? null : sh.id)}
+                  load={load}
+                />
+              )}
 
               {/* ── Expanded Shipment Panel ──────── */}
               {isExpanded && (
@@ -369,7 +339,6 @@ export function LoadWorkspace() {
                               'transportMode',
                               t.type === 'in_house' ? 'fleet_own' : 'carrier_third_party'
                             );
-                            // Reset vehicle when transporter changes
                             updateEditField(sh.id, 'vehicleRegistration', '');
                             updateEditField(sh.id, 'vehicleType', '');
                           }
@@ -445,44 +414,88 @@ export function LoadWorkspace() {
                     </div>
                   </div>
 
-                  {/* Stop list */}
+                  {/* Stop list with reorder controls */}
                   <div className="space-y-2">
                     <h4 className="text-sm font-semibold text-text-secondary">
-                      Stops
+                      Stops ({shipStops.length})
                     </h4>
-                    {shipStops.map((stop) => (
-                      <div
-                        key={stop.id}
-                        className="flex items-center gap-3 rounded-lg bg-gray-50 p-3"
-                      >
-                        <span
-                          className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
-                            stop.status === 'completed'
-                              ? 'bg-success-100 text-success'
-                              : 'bg-gray-200 text-gray-500'
-                          }`}
+                    {shipStops.map((stop, _index) => {
+                      const isPickup = stop.type === 'PICKUP';
+                      const pickupIdx = isPickup
+                        ? pickupStops.findIndex((s) => s.id === stop.id)
+                        : -1;
+                      const canMoveUp = isPickup && pickupIdx > 0;
+                      const canMoveDown =
+                        isPickup && pickupIdx < pickupStops.length - 1;
+
+                      return (
+                        <div
+                          key={stop.id}
+                          className="flex items-center gap-3 rounded-lg bg-gray-50 p-3"
                         >
-                          {stop.sequence}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold uppercase text-text-muted">
-                              {stop.type}
-                            </span>
-                            <StatusBadge status={stop.status} />
+                          {/* Reorder controls for pickup stops */}
+                          {isPickup && pickupStops.length > 1 ? (
+                            <div className="flex flex-col gap-0.5">
+                              <button
+                                onClick={() =>
+                                  handleMoveStop(sh.id, stop.id, 'up')
+                                }
+                                disabled={!canMoveUp}
+                                className="rounded p-0.5 text-gray-400 hover:text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed"
+                                title="Move up"
+                              >
+                                <MoveUp className="h-3 w-3" />
+                              </button>
+                              <GripVertical className="h-3 w-3 text-gray-300 mx-auto" />
+                              <button
+                                onClick={() =>
+                                  handleMoveStop(sh.id, stop.id, 'down')
+                                }
+                                disabled={!canMoveDown}
+                                className="rounded p-0.5 text-gray-400 hover:text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed"
+                                title="Move down"
+                              >
+                                <MoveDown className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="w-4" />
+                          )}
+
+                          <span
+                            className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
+                              stop.status === 'completed'
+                                ? 'bg-success-100 text-success'
+                                : 'bg-gray-200 text-gray-500'
+                            }`}
+                          >
+                            {stop.sequence}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold uppercase text-text-muted">
+                                {stop.type}
+                              </span>
+                              <StatusBadge status={stop.status} />
+                              {isPickup && stop.prId && (
+                                <span className="text-xs text-primary font-medium">
+                                  {prs.find((p) => p.id === stop.prId)?.clientName ?? stop.prId}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-text-primary truncate">
+                              {stop.location.name}
+                            </p>
                           </div>
-                          <p className="text-sm text-text-primary truncate">
-                            {stop.location.name}
-                          </p>
+                          <span className="text-xs text-text-muted">
+                            {stop.plannedItems
+                              .reduce((s, i) => s + i.qty, 0)
+                              .toLocaleString()}{' '}
+                            Kg
+                          </span>
                         </div>
-                        <span className="text-xs text-text-muted">
-                          {stop.plannedItems
-                            .reduce((s, i) => s + i.qty, 0)
-                            .toLocaleString()}{' '}
-                          Kg
-                        </span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   {/* Actions */}
@@ -599,6 +612,262 @@ export function LoadWorkspace() {
             </table>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Milk Run Flow Diagram ─────────────────────────────────
+function MilkRunFlowDiagram({
+  pickupStops,
+  deliverStop,
+  shipment,
+  edit,
+  isExpanded,
+  onToggle,
+  load,
+  prs,
+}: {
+  pickupStops: Stop[];
+  deliverStop: Stop | undefined;
+  shipment: Shipment;
+  edit: {
+    transporterName: string;
+    vehicleRegistration: string;
+    driverName: string;
+  };
+  isExpanded: boolean;
+  onToggle: () => void;
+  load: { destination: { type: string; name: string; city: string; state: string } };
+  prs: { id: string; clientName: string; materials: { type: string; plannedQty: number; unit: string }[] }[];
+}) {
+  return (
+    <div className="flex items-stretch gap-3">
+      {/* Left: Multiple Client Cards stacked */}
+      <div className="flex flex-col gap-2 flex-1 min-w-0">
+        {pickupStops.map((stop, idx) => {
+          const pr = prs.find((p) => p.id === stop.prId);
+          return (
+            <div
+              key={stop.id}
+              className={`rounded-lg border p-3 transition-colors ${
+                stop.status === 'completed'
+                  ? 'border-success-200 bg-success-50/50'
+                  : 'border-gray-200 bg-white'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary-100 text-[10px] font-bold text-primary">
+                  {idx + 1}
+                </span>
+                <MapPin className="h-3.5 w-3.5 text-warning flex-shrink-0" />
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                  Pickup {idx + 1}
+                </span>
+                {stop.status === 'completed' && (
+                  <Check className="h-3.5 w-3.5 text-success ml-auto" />
+                )}
+              </div>
+              <p className="text-sm font-medium text-text-primary truncate">
+                {pr?.clientName ?? stop.location.name}
+              </p>
+              <p className="text-xs text-text-muted truncate">
+                {stop.location.city}, {stop.location.state}
+              </p>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {stop.plannedItems.map((item, i) => (
+                  <span
+                    key={i}
+                    className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-text-muted"
+                  >
+                    {item.material} ({item.qty.toLocaleString()} {item.unit})
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Merge connector */}
+      <div className="flex flex-col items-center justify-center px-1">
+        <div className="flex-1 w-0.5 bg-gray-200" />
+        <div className="flex items-center gap-0 my-1">
+          <div className="w-4 h-0.5 bg-gray-300" />
+          <ArrowRight className="h-5 w-5 text-gray-400 flex-shrink-0" />
+        </div>
+        <div className="flex-1 w-0.5 bg-gray-200" />
+      </div>
+
+      {/* Center: Shipment Card */}
+      <div className="flex flex-col justify-center flex-1 min-w-0">
+        <button
+          onClick={onToggle}
+          className="rounded-lg border-2 border-primary-200 bg-primary-50/50 p-3 text-left transition-colors hover:bg-primary-50 w-full"
+        >
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              <Truck className="h-4 w-4 text-primary flex-shrink-0" />
+              <span className="text-sm font-semibold text-primary">
+                {shipment.id}
+              </span>
+            </div>
+            <StatusBadge status={shipment.status} />
+          </div>
+          {edit.vehicleRegistration ? (
+            <p className="text-xs text-text-secondary">
+              🚛 {edit.vehicleRegistration}
+            </p>
+          ) : (
+            <p className="text-xs text-text-muted italic">
+              No vehicle assigned
+            </p>
+          )}
+          {edit.driverName ? (
+            <p className="text-xs text-text-secondary">
+              👤 {edit.driverName}
+            </p>
+          ) : (
+            <p className="text-xs text-text-muted italic">
+              No driver assigned
+            </p>
+          )}
+          <p className="mt-1 text-[10px] text-primary-400">
+            Click to {isExpanded ? 'collapse' : 'expand'}
+          </p>
+        </button>
+      </div>
+
+      <ArrowRight className="h-5 w-5 text-gray-300 flex-shrink-0 self-center" />
+
+      {/* Right: Destination Card */}
+      <div className="flex flex-col justify-center flex-1 min-w-0">
+        <div className="rounded-lg border border-gray-200 bg-white p-3">
+          <div className="flex items-center gap-2 mb-1">
+            <MapPin className="h-4 w-4 text-success flex-shrink-0" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
+              {load.destination.type === 'plant' ? 'Plant' : 'Warehouse'}
+            </span>
+          </div>
+          <p className="text-sm font-medium text-text-primary truncate">
+            {deliverStop?.location.name ?? load.destination.name}
+          </p>
+          <p className="text-xs text-text-muted truncate">
+            {load.destination.city}, {load.destination.state}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Direct Flow Diagram (same as before) ──────────────────
+function DirectFlowDiagram({
+  pickupStop,
+  deliverStop,
+  shipment,
+  edit,
+  isExpanded,
+  onToggle,
+  load,
+}: {
+  pickupStop: Stop | undefined;
+  deliverStop: Stop | undefined;
+  shipment: Shipment;
+  edit: {
+    transporterName: string;
+    vehicleRegistration: string;
+    driverName: string;
+  };
+  isExpanded: boolean;
+  onToggle: () => void;
+  load: { destination: { type: string; name: string; city: string; state: string } };
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      {/* Client Card */}
+      <div className="flex-1 rounded-lg border border-gray-200 bg-white p-3 min-w-0">
+        <div className="flex items-center gap-2 mb-1">
+          <MapPin className="h-4 w-4 text-warning flex-shrink-0" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
+            Pickup
+          </span>
+        </div>
+        <p className="text-sm font-medium text-text-primary truncate">
+          {pickupStop?.location.name ?? 'N/A'}
+        </p>
+        <p className="text-xs text-text-muted truncate">
+          {pickupStop?.location.city}, {pickupStop?.location.state}
+        </p>
+        {pickupStop && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {pickupStop.plannedItems.map((item, i) => (
+              <span
+                key={i}
+                className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-text-muted"
+              >
+                {item.material}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <ArrowRight className="h-5 w-5 text-gray-300 flex-shrink-0" />
+
+      {/* Shipment Card */}
+      <button
+        onClick={onToggle}
+        className="flex-1 rounded-lg border-2 border-primary-200 bg-primary-50/50 p-3 text-left transition-colors hover:bg-primary-50 min-w-0"
+      >
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2">
+            <Truck className="h-4 w-4 text-primary flex-shrink-0" />
+            <span className="text-sm font-semibold text-primary">
+              {shipment.id}
+            </span>
+          </div>
+          <StatusBadge status={shipment.status} />
+        </div>
+        {edit.vehicleRegistration ? (
+          <p className="text-xs text-text-secondary">
+            🚛 {edit.vehicleRegistration}
+          </p>
+        ) : (
+          <p className="text-xs text-text-muted italic">
+            No vehicle assigned
+          </p>
+        )}
+        {edit.driverName ? (
+          <p className="text-xs text-text-secondary">
+            👤 {edit.driverName}
+          </p>
+        ) : (
+          <p className="text-xs text-text-muted italic">
+            No driver assigned
+          </p>
+        )}
+        <p className="mt-1 text-[10px] text-primary-400">
+          Click to {isExpanded ? 'collapse' : 'expand'}
+        </p>
+      </button>
+
+      <ArrowRight className="h-5 w-5 text-gray-300 flex-shrink-0" />
+
+      {/* Destination Card */}
+      <div className="flex-1 rounded-lg border border-gray-200 bg-white p-3 min-w-0">
+        <div className="flex items-center gap-2 mb-1">
+          <MapPin className="h-4 w-4 text-success flex-shrink-0" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
+            {load.destination.type === 'plant' ? 'Plant' : 'Warehouse'}
+          </span>
+        </div>
+        <p className="text-sm font-medium text-text-primary truncate">
+          {deliverStop?.location.name ?? load.destination.name}
+        </p>
+        <p className="text-xs text-text-muted truncate">
+          {load.destination.city}, {load.destination.state}
+        </p>
       </div>
     </div>
   );
