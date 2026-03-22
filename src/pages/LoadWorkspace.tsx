@@ -147,6 +147,8 @@ export function LoadWorkspace() {
 
   const isMilkRun = load.patternLabel === 'milk_run';
   const isMultiVehicle = load.patternLabel === 'multi_vehicle';
+  const isWarehouseConsolidation = load.patternLabel === 'warehouse_consolidation';
+  const isWarehouseDest = load.destination.type === 'warehouse';
 
   const linkedPRs = load.prIds
     .map((prId) => prs.find((pr) => pr.id === prId))
@@ -272,6 +274,16 @@ export function LoadWorkspace() {
               {isMultiVehicle && (
                 <span className="rounded-full bg-warning-100 px-2 py-0.5 text-xs font-bold text-warning">
                   🚛 MULTI-VEHICLE
+                </span>
+              )}
+              {isWarehouseConsolidation && (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">
+                  🏭 WAREHOUSE CONSOLIDATION
+                </span>
+              )}
+              {isWarehouseDest && !isWarehouseConsolidation && (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">
+                  🏭 → WAREHOUSE
                 </span>
               )}
             </span>

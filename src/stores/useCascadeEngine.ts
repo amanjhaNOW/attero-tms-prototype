@@ -20,6 +20,11 @@ import type { StopItem, Stop } from '@/types';
  *   Complete DELIVER on one shipment → check ALL shipments for this PR
  *     - If ALL DELIVER stops for this PR (across all shipments in load) are completed → PR "closed"
  *     - Otherwise → PR stays in current state
+ *
+ * Warehouse Consolidation cascade:
+ *   Complete DELIVER at WAREHOUSE → PR stays "picked_up" (NOT closed/delivered)
+ *   Complete DELIVER at PLANT → PR can move to "delivered"/"closed"
+ *   This is the KEY differentiator: warehouse is intermediate, plant is final.
  */
 
 export function completeStop(
@@ -63,11 +68,27 @@ export function completeStop(
     }
   }
 
-  // 3. If DELIVER: update PR to 'delivered' (but check multi-vehicle before closing)
+  // 3. If DELIVER: check load destination type before advancing PR
   if (stop.type === 'DELIVER' && stop.prId) {
-    const pr = prStore.getPRById(stop.prId);
-    if (pr && pr.status !== 'closed') {
-      prStore.updatePR(stop.prId, { status: 'delivered' });
+    const shipment = shipmentStore.getShipmentById(stop.shipmentId);
+    if (shipment) {
+      const load = loadStore.getLoadById(shipment.loadId);
+      if (load) {
+        // WAREHOUSE RULE: delivery to warehouse does NOT advance PR beyond picked_up
+        if (load.destination.type === 'warehouse') {
+          // PR stays "picked_up" — warehouse is intermediate, not final
+          const pr = prStore.getPRById(stop.prId);
+          if (pr && (pr.status === 'pending' || pr.status === 'planned')) {
+            prStore.updatePR(stop.prId, { status: 'picked_up' });
+          }
+        } else {
+          // PLANT destination: PR can advance to delivered
+          const pr = prStore.getPRById(stop.prId);
+          if (pr && pr.status !== 'closed') {
+            prStore.updatePR(stop.prId, { status: 'delivered' });
+          }
+        }
+      }
     }
   }
 
@@ -112,24 +133,28 @@ export function completeStop(
         if (allShipmentsCompleted) {
           loadStore.updateLoad(shipment.loadId, { status: 'completed' });
 
-          // 6. Close PRs — but for multi-vehicle, check ALL shipments' DELIVER stops for each PR
-          load.prIds.forEach((prId) => {
-            // Find ALL DELIVER stops across ALL shipments in this load that reference this PR
-            const deliverStopsForPR = allLoadStops.filter(
-              (s) => s.type === 'DELIVER' && s.prId === prId
-            );
-            // Check if ALL DELIVER stops for this PR are completed
-            const allDeliverCompleted = deliverStopsForPR.every(
-              (s) => s.id === stopId ? true : s.status === 'completed'
-            );
-            if (allDeliverCompleted) {
-              prStore.updatePR(prId, { status: 'closed' });
-            }
-          });
+          // 6. Close PRs — but ONLY if destination is PLANT
+          // Warehouse destination → PRs stay in picked_up
+          if (load.destination.type === 'plant') {
+            load.prIds.forEach((prId) => {
+              // Find ALL DELIVER stops across ALL shipments in this load that reference this PR
+              const deliverStopsForPR = allLoadStops.filter(
+                (s) => s.type === 'DELIVER' && s.prId === prId
+              );
+              // Check if ALL DELIVER stops for this PR are completed
+              const allDeliverCompleted = deliverStopsForPR.every(
+                (s) => s.id === stopId ? true : s.status === 'completed'
+              );
+              if (allDeliverCompleted) {
+                prStore.updatePR(prId, { status: 'closed' });
+              }
+            });
+          }
+          // If destination is warehouse, PRs intentionally stay as "picked_up"
         } else {
           // Even if not all shipments complete, check per-PR closure for multi-vehicle
-          // A PR can be closed if ALL its DELIVER stops across all shipments are done
-          if (load.patternLabel === 'multi_vehicle') {
+          // But ONLY for plant destinations
+          if (load.patternLabel === 'multi_vehicle' && load.destination.type === 'plant') {
             load.prIds.forEach((prId) => {
               const deliverStopsForPR = allLoadStops.filter(
                 (s) => s.type === 'DELIVER' && s.prId === prId

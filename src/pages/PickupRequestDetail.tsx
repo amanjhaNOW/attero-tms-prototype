@@ -102,6 +102,16 @@ export function PickupRequestDetail() {
 
   const totalPlannedQty = pr.materials.reduce((sum, m) => sum + m.plannedQty, 0);
 
+  // Check if material is at warehouse with no outbound load to plant
+  const warehouseNeedsDispatch = useMemo(() => {
+    if (!pr || qtyData.qtyAtWarehouse <= 0) return false;
+    // Check if there's an active load with destination=plant that references this PR
+    const plantLoads = allLoads.filter(
+      (l) => l.destination.type === 'plant' && l.prIds.includes(pr.id) && l.status !== 'completed'
+    );
+    return plantLoads.length === 0 && qtyData.qtyAtWarehouse > qtyData.qtyAtPlant;
+  }, [pr, qtyData, allLoads]);
+
   // Build progress segments (only show segments with values > 0, plus remaining)
   const progressSegments = [];
   if (qtyData.qtyAtPlant > 0) {
@@ -194,6 +204,14 @@ export function PickupRequestDetail() {
               </span>
             )}
           </div>
+          {warehouseNeedsDispatch && (
+            <div className="flex items-center gap-2 rounded-lg bg-warning-50 border border-warning-200 px-3 py-2 text-sm text-warning-700">
+              <span>⚠️</span>
+              <span className="font-medium">
+                Pending dispatch to plant — {formatQty(qtyData.qtyAtWarehouse)} sitting at warehouse
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -209,7 +227,7 @@ export function PickupRequestDetail() {
                 <tr className="border-b border-gray-200">
                   <th className="px-3 py-2 text-left font-semibold text-text-secondary">Shipment</th>
                   <th className="px-3 py-2 text-left font-semibold text-text-secondary">Load</th>
-                  <th className="px-3 py-2 text-left font-semibold text-text-secondary">Type</th>
+                  <th className="px-3 py-2 text-left font-semibold text-text-secondary">Leg</th>
                   <th className="px-3 py-2 text-left font-semibold text-text-secondary">From → To</th>
                   <th className="px-3 py-2 text-left font-semibold text-text-secondary">Qty Picked</th>
                   <th className="px-3 py-2 text-left font-semibold text-text-secondary">Qty Delivered</th>
@@ -255,9 +273,15 @@ export function PickupRequestDetail() {
                         )}
                       </td>
                       <td className="px-3 py-2.5">
-                        <span className="capitalize text-text-secondary">
-                          {load?.patternLabel.replace(/_/g, ' ') ?? '—'}
-                        </span>
+                        {load?.destination.type === 'warehouse' ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-warning-100 px-2 py-0.5 text-xs font-medium text-warning-700">
+                            🏭 → Warehouse
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-success-100 px-2 py-0.5 text-xs font-medium text-success-700">
+                            🏢 → Plant
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-2.5">
                         <div className="flex items-center gap-1 text-text-secondary">
