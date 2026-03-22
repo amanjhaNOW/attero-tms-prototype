@@ -178,7 +178,7 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="border-t border-gray-200 px-4 py-3">
-        <p className="text-xs text-text-muted">v0.1.0 — Slice 0</p>
+        <p className="text-xs text-text-muted">v0.2.0 — Slice 1</p>
       </div>
     </aside>
   );

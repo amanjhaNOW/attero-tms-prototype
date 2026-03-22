@@ -1,10 +1,11 @@
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { MapPin, Calendar, FileText } from 'lucide-react';
 import { PageHeader, StatusBadge, EmptyState } from '@/components';
 import { usePRStore } from '@/stores';
 
 export function PickupRequestDetail() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const pr = usePRStore((s) => s.pickupRequests.find((p) => p.id === id));
 
   if (!pr) {
@@ -50,9 +51,14 @@ export function PickupRequestDetail() {
             <button className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-text-secondary hover:bg-gray-50 transition-colors">
               Edit
             </button>
-            <button className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 transition-colors">
-              Create Load
-            </button>
+            {pr.status === 'pending' && (
+              <button
+                onClick={() => navigate(`/loads/create?prs=${pr.id}`)}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 transition-colors"
+              >
+                Create Load
+              </button>
+            )}
           </div>
         }
       />
