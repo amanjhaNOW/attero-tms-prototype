@@ -2,8 +2,21 @@
 
 ## Quick Links
 - **Repo:** https://github.com/amanjhaNOW/attero-tms-prototype
-- **Plan PDF:** Attero-TMS-Prototype-Plan-v4.pdf
+- **Live:** https://attero-tms.pages.dev
+- **Architecture:** `docs/ARCHITECTURE.md`
+- **Route Architecture PDF:** `docs/Route-Architecture.pdf`
 - **Dev Server:** localhost:5173
+
+## Architecture Decisions (Mar 22)
+- **Load = WHAT** (business layer: PRs, destination, documents)
+- **Shipment = HOW** (execution layer: truck + its OWN route of stops)
+- **Routes belong to Shipments** (not Load)
+- **Auto-Sync** (default): Add PR → all trucks get it. Add truck → clone route.
+- **Independent** (cross-dock): TRANSFER stops = break sync. Each route managed separately.
+- **Two entry points**: Load-level (syncs all) vs Shipment-level (just that truck)
+- **No data model changes needed** — just behavior
+
+---
 
 ---
 
@@ -21,7 +34,7 @@
 ---
 
 ## SLICE 1: Direct Shipment (Full Journey)
-**Status:** 🔄 IN PROGRESS | **Branch:** feat/slice-1-direct-shipment
+**Status:** ✅ COMPLETE | **Branch:** merged to main
 
 ### Features
 - [ ] PR List — functional with real data, tabs with counts, search, filters, overdue indicators
@@ -52,7 +65,7 @@
 ---
 
 ## SLICE 2: Milk Run
-**Status:** ⬜ NOT STARTED | **Branch:** feat/slice-2-milk-run
+**Status:** ✅ COMPLETE | **Branch:** merged to main
 
 ### Features
 - [ ] PR List — multi-select checkboxes + "Create Load" action bar
@@ -71,7 +84,7 @@
 ---
 
 ## SLICE 3: Multi-Vehicle + Qty Tracker
-**Status:** ⬜ NOT STARTED | **Branch:** feat/slice-3-multi-vehicle
+**Status:** ✅ COMPLETE | **Branch:** merged to main
 
 ### Features
 - [ ] Load Workspace — "+ Add Shipment" (no qty split, each shows full material list)
@@ -89,7 +102,7 @@
 ---
 
 ## SLICE 4: Warehouse Consolidation (THE KEY)
-**Status:** ⬜ NOT STARTED | **Branch:** feat/slice-4-warehouse
+**Status:** ✅ COMPLETE | **Branch:** merged to main
 
 ### Features
 - [ ] Create Load with destination = Warehouse
@@ -111,6 +124,33 @@
 - [ ] Can mix warehouse + new PRs in one load
 - [ ] Partial qty pickup works
 - [ ] PR closes only when all material at plant
+
+---
+
+## UX IMPROVEMENTS (Between Slices)
+**Status:** ✅ COMPLETE
+
+- [x] Colors matched to her exact screenshots (purple, teal, coral, amber badges)
+- [x] Create Load page: redesigned as compact confirmation with popup pickers
+- [x] Create Load merged INTO workspace — no in-between page
+- [x] PR List → "Create Load" goes DIRECTLY to workspace (instant create)
+- [x] Warehouse Dashboard → "Create Load" goes DIRECTLY to workspace
+- [x] Visual flow diagram: SVG arrows, source→shipment→destination
+- [x] Shipment edit: inline expand panel below diagram
+- [x] Multi-vehicle: "+ Add Shipment" creates 2nd truck with cloned route
+- [x] Flow diagram handles: Direct, Milk Run, Multi-Vehicle, Cross-Dock (5-col)
+- [x] Blank page bug fixed (Zustand selector caching)
+- [x] SPA routing fixed (Cloudflare _redirects)
+
+### Pending UX Work
+- [ ] Route sync behavior: Add PR at Load level → syncs to all shipments
+- [ ] Route sync behavior: Add Stop at Shipment level → only that truck
+- [ ] addShipmentToLoad() → properly clone full route (not just first PR)
+- [ ] addPRsToLoad() → sync pickup to ALL synced shipments
+- [ ] Shipment edit panel: "Add Stop" button for per-shipment stops
+- [ ] Cross-dock: TRANSFER_IN/OUT stop creation in shipment edit
+- [ ] Cross-dock: transfer location TBD at planning
+- [ ] Mobile responsive (Slice 6)
 
 ---
 
