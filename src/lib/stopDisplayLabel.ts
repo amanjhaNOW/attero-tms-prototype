@@ -1,6 +1,10 @@
 /**
  * Utility: Map stop types to user-friendly UX labels.
  * Data model stays TRANSFER_IN / TRANSFER_OUT — only UI labels change.
+ *
+ * 1:1 pair model:
+ *   TRANSFER_OUT.linkedStopId → the TRANSFER_IN it feeds
+ *   TRANSFER_IN.linkedStopId  → the TRANSFER_OUT it receives from
  */
 import type { Stop, Shipment } from '@/types';
 
@@ -21,19 +25,21 @@ export function getStopDisplayLabel(
     case 'DELIVER':
       return { icon: '📦', label: 'Deliver', detail: stop.location.name };
     case 'TRANSFER_OUT': {
-      // Find the target shipment that has the linked TRANSFER_IN stop
+      // 1:1: linkedStopId is the TRANSFER_IN on the target shipment
       let targetLabel = 'TBD';
-      if (stop.linkedStopId && allStops) {
-        const linkedStop = allStops.find((s) => s.id === stop.linkedStopId);
-        if (linkedStop) {
-          const targetShip = allShipments.find((s) => s.id === linkedStop.shipmentId);
+      if (stop.linkedStopId) {
+        if (allStops) {
+          const linkedStop = allStops.find((s) => s.id === stop.linkedStopId);
+          if (linkedStop) {
+            const targetShip = allShipments.find((s) => s.id === linkedStop.shipmentId);
+            if (targetShip) targetLabel = targetShip.id;
+          }
+        } else {
+          const targetShip = allShipments.find((s) =>
+            s.stopIds.includes(stop.linkedStopId || ''),
+          );
           if (targetShip) targetLabel = targetShip.id;
         }
-      } else if (stop.linkedStopId) {
-        const targetShip = allShipments.find((s) =>
-          s.stopIds.includes(stop.linkedStopId || ''),
-        );
-        if (targetShip) targetLabel = targetShip.id;
       }
       return {
         icon: '🤝',
@@ -42,21 +48,27 @@ export function getStopDisplayLabel(
       };
     }
     case 'TRANSFER_IN': {
-      // Find all TRANSFER_OUTs that link to this stop
-      const feeders: string[] = [];
-      if (allStops) {
-        allStops
-          .filter((s) => s.type === 'TRANSFER_OUT' && s.linkedStopId === stop.id)
-          .forEach((s) => {
-            const ship = allShipments.find((sh) => sh.id === s.shipmentId);
-            if (ship) feeders.push(ship.id);
-          });
+      // 1:1: linkedStopId is the TRANSFER_OUT that feeds this stop
+      let sourceLabel = 'feeders';
+      if (stop.linkedStopId) {
+        if (allStops) {
+          const linkedOut = allStops.find((s) => s.id === stop.linkedStopId);
+          if (linkedOut) {
+            const sourceShip = allShipments.find((sh) => sh.id === linkedOut.shipmentId);
+            if (sourceShip) sourceLabel = sourceShip.id;
+          }
+        } else {
+          const sourceShip = allShipments.find((s) =>
+            s.stopIds.includes(stop.linkedStopId || ''),
+          );
+          if (sourceShip) sourceLabel = sourceShip.id;
+        }
       }
-      const detail =
-        feeders.length > 0
-          ? `from ${feeders.join(', ')}`
-          : 'from feeders';
-      return { icon: '📥', label: 'Receive', detail };
+      return {
+        icon: '📥',
+        label: 'Receive',
+        detail: `from ${sourceLabel}`,
+      };
     }
     default:
       return { icon: '📍', label: stop.type, detail: stop.location.name };

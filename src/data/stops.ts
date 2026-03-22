@@ -320,10 +320,10 @@ export const mockStops: Stop[] = [
     completedAt: '2026-03-14T16:00:00Z',
   },
 
-  // ── LOAD-008: Cross-dock stops ─────────────────
-  // Feeder 1 (SHP-007): PICKUP Jaipur → TRANSFER_OUT
+  // ── LOAD-008: Cross-dock stops (1:1 TRANSFER pairs) ─────────────────
+  // Feeder 1 (SHP-007): PICKUP Jaipur → TRANSFER_OUT (paired with STOP-CD-R1)
   {
-    id: 'STOP-013',
+    id: 'STOP-CD-P1',
     shipmentId: 'SHP-007',
     sequence: 1,
     type: 'PICKUP',
@@ -343,16 +343,16 @@ export const mockStops: Stop[] = [
     status: 'pending',
   },
   {
-    id: 'STOP-014',
+    id: 'STOP-CD-T1',
     shipmentId: 'SHP-007',
     sequence: 2,
     type: 'TRANSFER_OUT',
     location: {
-      name: '',
-      state: '',
-      city: '',
-      pin: '',
-      address: '',
+      name: 'Near Ajmer',
+      state: 'Rajasthan',
+      city: 'Ajmer',
+      pin: '305001',
+      address: 'NH-8, Near Ajmer Bypass, Rajasthan',
     },
     prId: '',
     plannedItems: [
@@ -360,12 +360,12 @@ export const mockStops: Stop[] = [
     ],
     actualItems: [],
     totalActualQty: 0,
-    linkedStopId: 'STOP-017',
+    linkedStopId: 'STOP-CD-R1',
     status: 'pending',
   },
-  // Feeder 2 (SHP-008): PICKUP Ajmer → TRANSFER_OUT
+  // Feeder 2 (SHP-008): PICKUP Ajmer → TRANSFER_OUT (paired with STOP-CD-R2)
   {
-    id: 'STOP-015',
+    id: 'STOP-CD-P2',
     shipmentId: 'SHP-008',
     sequence: 1,
     type: 'PICKUP',
@@ -385,16 +385,16 @@ export const mockStops: Stop[] = [
     status: 'pending',
   },
   {
-    id: 'STOP-016',
+    id: 'STOP-CD-T2',
     shipmentId: 'SHP-008',
     sequence: 2,
     type: 'TRANSFER_OUT',
     location: {
-      name: '',
-      state: '',
-      city: '',
-      pin: '',
-      address: '',
+      name: 'Near Chittorgarh',
+      state: 'Rajasthan',
+      city: 'Chittorgarh',
+      pin: '312001',
+      address: 'NH-48, Near Chittorgarh Toll Plaza, Rajasthan',
     },
     prId: '',
     plannedItems: [
@@ -402,36 +402,56 @@ export const mockStops: Stop[] = [
     ],
     actualItems: [],
     totalActualQty: 0,
-    linkedStopId: 'STOP-017',
+    linkedStopId: 'STOP-CD-R2',
     status: 'pending',
   },
-  // Line-Haul (SHP-009): TRANSFER_IN → DELIVER Haridwar
+  // Line-Haul (SHP-009): TRANSFER_IN from Feeder 1 → TRANSFER_IN from Feeder 2 → DELIVER Haridwar
   {
-    id: 'STOP-017',
+    id: 'STOP-CD-R1',
     shipmentId: 'SHP-009',
     sequence: 1,
     type: 'TRANSFER_IN',
     location: {
-      name: '',
-      state: '',
-      city: '',
-      pin: '',
-      address: '',
+      name: 'Near Ajmer',
+      state: 'Rajasthan',
+      city: 'Ajmer',
+      pin: '305001',
+      address: 'NH-8, Near Ajmer Bypass, Rajasthan',
     },
     prId: '',
     plannedItems: [
       { material: 'E-waste', qty: 5000, unit: 'Kg' },
+    ],
+    actualItems: [],
+    totalActualQty: 0,
+    linkedStopId: 'STOP-CD-T1',
+    status: 'pending',
+  },
+  {
+    id: 'STOP-CD-R2',
+    shipmentId: 'SHP-009',
+    sequence: 2,
+    type: 'TRANSFER_IN',
+    location: {
+      name: 'Near Chittorgarh',
+      state: 'Rajasthan',
+      city: 'Chittorgarh',
+      pin: '312001',
+      address: 'NH-48, Near Chittorgarh Toll Plaza, Rajasthan',
+    },
+    prId: '',
+    plannedItems: [
       { material: 'Li-ion Battery', qty: 3000, unit: 'Kg' },
     ],
     actualItems: [],
     totalActualQty: 0,
-    linkedStopId: 'STOP-014',
+    linkedStopId: 'STOP-CD-T2',
     status: 'pending',
   },
   {
-    id: 'STOP-018',
+    id: 'STOP-CD-D1',
     shipmentId: 'SHP-009',
-    sequence: 2,
+    sequence: 3,
     type: 'DELIVER',
     location: {
       name: 'Attero Recycling Pvt Ltd Haridwar',
@@ -447,7 +467,7 @@ export const mockStops: Stop[] = [
     ],
     actualItems: [],
     totalActualQty: 0,
-    linkedStopId: 'STOP-017',
+    linkedStopId: 'STOP-CD-R1',
     status: 'pending',
   },
 ];

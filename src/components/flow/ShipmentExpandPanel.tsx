@@ -11,6 +11,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { removeStopFromShipment, addStopToShipment } from '@/stores';
+import { useStopStore } from '@/stores';
 import type { Shipment, Stop, PickupRequest, Transporter, Vehicle } from '@/types';
 
 interface ShipmentExpandPanelProps {
@@ -211,6 +212,7 @@ export function ShipmentExpandPanel({
       case 'DELIVER':
         return 'DELIVER';
       case 'TRANSFER_OUT': {
+        // 1:1: linkedStopId → the TRANSFER_IN on the target shipment
         const linkedStop = allStops.find((s) => s.id === stop.linkedStopId);
         const targetShip = linkedStop
           ? allShipments.find((s) => s.id === linkedStop.shipmentId)
@@ -218,13 +220,12 @@ export function ShipmentExpandPanel({
         return `HANDOVER → ${targetShip?.id || 'TBD'}`;
       }
       case 'TRANSFER_IN': {
-        const feeders = allStops
-          .filter((s) => s.type === 'TRANSFER_OUT' && s.linkedStopId === stop.id)
-          .map((s) => {
-            const ship = allShipments.find((sh) => sh.id === s.shipmentId);
-            return ship?.id || '?';
-          });
-        return feeders.length > 0 ? `RECEIVE ← ${feeders.join(', ')}` : 'RECEIVE';
+        // 1:1: linkedStopId → the TRANSFER_OUT that feeds this stop
+        const linkedOut = allStops.find((s) => s.id === stop.linkedStopId);
+        const sourceShip = linkedOut
+          ? allShipments.find((sh) => sh.id === linkedOut.shipmentId)
+          : null;
+        return sourceShip ? `RECEIVE ← ${sourceShip.id}` : 'RECEIVE';
       }
       default:
         return stop.type;
@@ -530,6 +531,39 @@ export function ShipmentExpandPanel({
                           {materialSummary}
                         </p>
                       )}
+
+                      {/* Tentative meeting point for TRANSFER_OUT */}
+                      {stop.type === 'TRANSFER_OUT' && (
+                        <div className="mt-1.5">
+                          <label className="text-[10px] text-amber-700 font-medium">📍 Suggested meeting point:</label>
+                          <input
+                            type="text"
+                            value={stop.location.name}
+                            onChange={(e) => {
+                              useStopStore.getState().updateStop(stop.id, {
+                                location: { ...stop.location, name: e.target.value },
+                              });
+                            }}
+                            placeholder="e.g. Near Ajmer Bypass"
+                            className="mt-0.5 w-full rounded border border-amber-200 bg-amber-50/50 px-2 py-1 text-xs outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-300"
+                          />
+                        </div>
+                      )}
+
+                      {/* Read-only meeting point for TRANSFER_IN (from linked TRANSFER_OUT) */}
+                      {stop.type === 'TRANSFER_IN' && (() => {
+                        const linkedOut = allStops.find((s) => s.id === stop.linkedStopId);
+                        const meetingPoint = linkedOut?.location.name || stop.location.name;
+                        return meetingPoint ? (
+                          <p className="mt-1 text-[10px] text-blue-600">
+                            📍 Meeting point: {meetingPoint} <span className="text-text-muted">(from handover)</span>
+                          </p>
+                        ) : (
+                          <p className="mt-1 text-[10px] text-text-muted italic">
+                            📍 Meeting point: TBD (set on handover stop)
+                          </p>
+                        );
+                      })()}
                     </div>
 
                     {/* Quantity */}

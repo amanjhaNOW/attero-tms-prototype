@@ -104,30 +104,32 @@ export function ShipmentDetail() {
   const shipmentRole = useMemo(() => getShipmentRole(stops), [stops]);
 
   // Find the active (next pending) stop — follows sequence order
-  // For cross-dock: PICKUP → TRANSFER_OUT → TRANSFER_IN → DELIVER
+  // For cross-dock: PICKUP → TRANSFER_OUT → TRANSFER_IN (each independent) → DELIVER
   const activeStop = useMemo(() => {
     // Sequence-ordered: find first pending stop
     const nextPending = stops.find((s) => s.status === 'pending');
     if (!nextPending) return undefined;
 
-    // DELIVER is blocked until all pickups complete
-    if (nextPending.type === 'DELIVER' && !allPickupsCompleted) {
-      return undefined;
+    // DELIVER is blocked until ALL pickups AND ALL TRANSFER_INs in this shipment are completed
+    if (nextPending.type === 'DELIVER') {
+      const allPrereqsDone = stops
+        .filter((s) => s.type === 'PICKUP' || s.type === 'TRANSFER_IN')
+        .every((s) => s.status === 'completed' || s.status === 'skipped');
+      if (!allPrereqsDone) {
+        return undefined;
+      }
     }
 
-    // TRANSFER_IN is blocked until all linked TRANSFER_OUTs are complete
-    if (nextPending.type === 'TRANSFER_IN') {
-      const linkedOuts = allStopsRaw.filter(
-        (s) => s.type === 'TRANSFER_OUT' && s.linkedStopId === nextPending.id,
-      );
-      const allOutsComplete = linkedOuts.every((s) => s.status === 'completed');
-      if (!allOutsComplete && linkedOuts.length > 0) {
+    // TRANSFER_IN: check if its 1:1 linked TRANSFER_OUT is completed
+    if (nextPending.type === 'TRANSFER_IN' && nextPending.linkedStopId) {
+      const linkedOut = allStopsRaw.find((s) => s.id === nextPending.linkedStopId);
+      if (linkedOut && linkedOut.status !== 'completed') {
         return nextPending; // Return it but we'll show it as "waiting"
       }
     }
 
     return nextPending;
-  }, [stops, allPickupsCompleted, allStopsRaw]);
+  }, [stops, allStopsRaw]);
 
   // Initialize actual items for the active stop if not done yet
   if (activeStop && activeStop.type === 'PICKUP' && !initializedStops.has(activeStop.id)) {
@@ -234,23 +236,23 @@ export function ShipmentDetail() {
     (stopId: string) => {
       setTransferError(null);
 
-      // Gather actual items from all linked completed TRANSFER_OUTs
+      // 1:1 model: gather actual items from the single linked TRANSFER_OUT
       const stop = stops.find((s) => s.id === stopId);
       if (!stop) return;
 
       const freshStops = useStopStore.getState().stops;
-      const linkedOuts = freshStops.filter(
-        (s) => s.type === 'TRANSFER_OUT' && s.linkedStopId === stopId,
-      );
-      const receiveItems: StopItem[] = linkedOuts.flatMap((out) =>
-        out.actualItems.length > 0 ? out.actualItems : out.plannedItems,
-      );
+      const linkedOut = stop.linkedStopId
+        ? freshStops.find((s) => s.id === stop.linkedStopId)
+        : undefined;
 
-      // Also update location from first completed TRANSFER_OUT
-      const firstCompletedOut = linkedOuts.find((s) => s.status === 'completed');
-      if (firstCompletedOut && firstCompletedOut.location.name) {
+      const receiveItems: StopItem[] = linkedOut
+        ? (linkedOut.actualItems.length > 0 ? linkedOut.actualItems : linkedOut.plannedItems)
+        : stop.plannedItems;
+
+      // Update location from linked TRANSFER_OUT
+      if (linkedOut && linkedOut.status === 'completed' && linkedOut.location.name) {
         useStopStore.getState().updateStop(stopId, {
-          location: { ...firstCompletedOut.location },
+          location: { ...linkedOut.location },
         });
       }
 
@@ -453,20 +455,23 @@ export function ShipmentDetail() {
               {stops.map((stop, index) => {
                 const isActiveStop = activeStop?.id === stop.id;
                 // For milk run DELIVER: only active if ALL pickups completed
+                // DELIVER is blocked until ALL PICKUP + TRANSFER_IN stops in shipment are completed
+                const allPrereqsCompleted = stops
+                  .filter((s) => s.type === 'PICKUP' || s.type === 'TRANSFER_IN')
+                  .every((s) => s.status === 'completed' || s.status === 'skipped');
                 const isDeliverBlocked =
-                  stop.type === 'DELIVER' && !allPickupsCompleted && stop.status === 'pending';
+                  stop.type === 'DELIVER' && !allPrereqsCompleted && stop.status === 'pending';
 
-                // TRANSFER_IN blocked until all linked TRANSFER_OUTs complete
-                const linkedOuts = stop.type === 'TRANSFER_IN'
-                  ? allStopsRaw.filter(
-                      (s) => s.type === 'TRANSFER_OUT' && s.linkedStopId === stop.id,
-                    )
-                  : [];
+                // TRANSFER_IN blocked until its 1:1 linked TRANSFER_OUT is complete
+                const linkedOut = stop.type === 'TRANSFER_IN' && stop.linkedStopId
+                  ? allStopsRaw.find((s) => s.id === stop.linkedStopId)
+                  : undefined;
+                const linkedOuts = linkedOut ? [linkedOut] : [];
                 const isTransferInBlocked =
                   stop.type === 'TRANSFER_IN' &&
                   stop.status === 'pending' &&
-                  linkedOuts.length > 0 &&
-                  !linkedOuts.every((s) => s.status === 'completed');
+                  linkedOut != null &&
+                  linkedOut.status !== 'completed';
 
                 return (
                   <StopTimelineNode
@@ -747,17 +752,13 @@ function StopTimelineNode({
                   })()}
                 </span>
               )}
-              {/* Show sources for TRANSFER_IN */}
-              {stop.type === 'TRANSFER_IN' && linkedTransferOuts && allShipments && (
+              {/* Show source for TRANSFER_IN (1:1 linked TRANSFER_OUT) */}
+              {stop.type === 'TRANSFER_IN' && stop.linkedStopId && allStops && allShipments && (
                 <span className="text-xs font-medium text-blue-700 bg-blue-50 rounded-full px-2 py-0.5">
                   {(() => {
-                    const sourceIds = linkedTransferOuts
-                      .map((s) => {
-                        const ship = allShipments.find((sh) => sh.id === s.shipmentId);
-                        return ship?.id || '?';
-                      })
-                      .join(', ');
-                    return sourceIds ? `← ${sourceIds}` : '← feeders';
+                    const linked = allStops.find((s) => s.id === stop.linkedStopId);
+                    const sourceShip = linked ? allShipments.find((s) => s.id === linked.shipmentId) : null;
+                    return sourceShip ? `← ${sourceShip.id}` : '← feeder';
                   })()}
                 </span>
               )}
@@ -786,11 +787,11 @@ function StopTimelineNode({
           <p className="font-medium text-text-primary">{stop.location.name}</p>
           <p className="text-sm text-text-muted">{stop.location.address}</p>
 
-          {/* Blocked message for DELIVER when pickups not done */}
+          {/* Blocked message for DELIVER when prerequisites not done */}
           {isBlocked && stop.type === 'DELIVER' && (
             <div className="mt-3 rounded-lg bg-orange-50 border border-orange-200 p-3">
               <p className="text-xs font-medium text-orange-600">
-                ⏳ Waiting for all pickups to complete before delivery can begin
+                ⏳ Waiting for all pickups and receives to complete before delivery
               </p>
               {allPickupStops && (
                 <p className="text-xs text-orange-500 mt-1">
@@ -800,38 +801,32 @@ function StopTimelineNode({
             </div>
           )}
 
-          {/* Blocked message for TRANSFER_IN when handovers not done */}
+          {/* Blocked message for TRANSFER_IN when linked handover not done */}
           {isBlocked && stop.type === 'TRANSFER_IN' && linkedTransferOuts && allShipments && (
             <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
-              <p className="text-xs font-medium text-amber-700">
-                ⏳ Waiting for handover from:
-              </p>
-              <div className="mt-1 space-y-1">
-                {linkedTransferOuts.map((out) => {
-                  const ship = allShipments.find((s) => s.id === out.shipmentId);
-                  const isDone = out.status === 'completed';
-                  return (
-                    <div key={out.id} className="flex items-center gap-2 text-xs">
-                      {isDone ? (
-                        <span className="text-green-600">✅</span>
-                      ) : (
-                        <span className="text-amber-500">⏳</span>
-                      )}
-                      <span className={isDone ? 'text-green-700 line-through' : 'text-amber-800 font-medium'}>
-                        {ship?.id || out.shipmentId}
+              {linkedTransferOuts.map((out) => {
+                const ship = allShipments.find((s) => s.id === out.shipmentId);
+                const isDone = out.status === 'completed';
+                return (
+                  <div key={out.id} className="flex items-center gap-2 text-xs">
+                    {isDone ? (
+                      <span className="text-green-600">✅</span>
+                    ) : (
+                      <span className="text-amber-500">⏳</span>
+                    )}
+                    <span className={isDone ? 'text-green-700' : 'text-amber-800 font-medium'}>
+                      {isDone
+                        ? `Received from ${ship?.id || out.shipmentId}`
+                        : `Waiting for ${ship?.id || out.shipmentId} to complete handover`}
+                    </span>
+                    {isDone && (
+                      <span className="text-green-600 text-[10px]">
+                        ({out.actualItems.reduce((s, i) => s + i.qty, 0).toLocaleString()} Kg)
                       </span>
-                      {isDone && (
-                        <span className="text-green-600 text-[10px]">
-                          ({out.actualItems.reduce((s, i) => s + i.qty, 0).toLocaleString()} Kg)
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              <p className="text-[10px] text-amber-600 mt-2">
-                {linkedTransferOuts.filter((s) => s.status === 'completed').length}/{linkedTransferOuts.length} handovers completed
-              </p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -994,13 +989,13 @@ function StopTimelineNode({
             </div>
           )}
 
-          {/* ── ACTIVE TRANSFER_IN (Receive) STOP ────── */}
+          {/* ── ACTIVE TRANSFER_IN (Receive) STOP — 1:1 model ────── */}
           {isActive && stop.type === 'TRANSFER_IN' && linkedTransferOuts && allShipments && (
             <div className="mt-4 space-y-4">
-              {/* Show qty from each linked TRANSFER_OUT */}
+              {/* Show material from the single linked TRANSFER_OUT */}
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-2">
-                  Material from Feeders
+                  Material from Feeder
                 </p>
                 <div className="space-y-1.5">
                   {linkedTransferOuts.map((out) => {
@@ -1022,7 +1017,7 @@ function StopTimelineNode({
                           {out.status === 'completed' ? '✅' : '⏳'}
                         </span>
                         <span className="text-xs font-bold text-text-primary">
-                          From {ship?.id || 'Unknown'}:
+                          📥 Receive from {ship?.id || 'Unknown'}:
                         </span>
                         <span className="text-xs text-text-secondary">
                           {totalQty.toLocaleString()} Kg
@@ -1041,17 +1036,18 @@ function StopTimelineNode({
                 </div>
               </div>
 
-              {/* Location auto-fills from first completed TRANSFER_OUT */}
+              {/* Location from linked TRANSFER_OUT */}
               {(() => {
-                const firstCompleted = linkedTransferOuts.find((s) => s.status === 'completed');
-                if (firstCompleted && firstCompleted.location.name) {
+                const out = linkedTransferOuts[0];
+                const locName = out?.location.name || stop.location.name;
+                if (locName) {
                   return (
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-1">
                         Meeting Point
                       </p>
                       <p className="text-sm text-text-primary bg-gray-50 rounded-lg px-3 py-2">
-                        📍 {firstCompleted.location.name}
+                        📍 {locName} <span className="text-text-muted text-[10px]">(from handover)</span>
                       </p>
                     </div>
                   );
@@ -1061,15 +1057,15 @@ function StopTimelineNode({
 
               <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
                 {(() => {
-                  const allDone = linkedTransferOuts.every((s) => s.status === 'completed');
+                  const outDone = linkedTransferOuts.length > 0 && linkedTransferOuts[0].status === 'completed';
                   return (
                     <button
                       onClick={onCompleteReceive}
-                      disabled={!allDone}
+                      disabled={!outDone}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Check className="h-4 w-4" />
-                      {allDone ? 'Confirm Receipt ✅' : '⏳ Waiting for handovers...'}
+                      {outDone ? 'Confirm Receipt ✅' : '⏳ Waiting for handover...'}
                     </button>
                   );
                 })()}

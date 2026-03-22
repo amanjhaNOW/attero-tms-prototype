@@ -50,25 +50,42 @@ export function completeStop(
   const stop = stopStore.getStopById(stopId);
   if (!stop) return { success: false, message: 'Stop not found' };
 
-  // ── TRANSFER_IN validation: ALL linked TRANSFER_OUTs must be completed ──
+  // ── TRANSFER_IN validation: linked TRANSFER_OUT must be completed (1:1 pair) ──
   if (stop.type === 'TRANSFER_IN') {
-    const allStops = stopStore.stops;
-    // Find all TRANSFER_OUT stops that link to this TRANSFER_IN
-    const linkedTransferOuts = allStops.filter(
-      (s) => s.type === 'TRANSFER_OUT' && s.linkedStopId === stop.id,
-    );
+    if (stop.linkedStopId) {
+      const linkedOut = stopStore.getStopById(stop.linkedStopId);
+      if (linkedOut && linkedOut.type === 'TRANSFER_OUT' && linkedOut.status !== 'completed') {
+        const sh = shipmentStore.getShipmentById(linkedOut.shipmentId);
+        return {
+          success: false,
+          message: `Cannot confirm receipt. Waiting for handover from: ${sh?.id || linkedOut.shipmentId}`,
+        };
+      }
+    }
+  }
 
-    const pendingOuts = linkedTransferOuts.filter((s) => s.status !== 'completed');
-    if (pendingOuts.length > 0) {
-      const pendingShipIds = pendingOuts
-        .map((s) => {
-          const sh = shipmentStore.getShipmentById(s.shipmentId);
-          return sh?.id || s.shipmentId;
-        })
-        .join(', ');
+  // ── DELIVER validation: ALL TRANSFER_IN + PICKUP stops in this shipment must be completed ──
+  if (stop.type === 'DELIVER') {
+    const shipStops = stopStore.stops.filter((s) => s.shipmentId === stop.shipmentId);
+    const pendingPrereqs = shipStops.filter(
+      (s) =>
+        s.id !== stopId &&
+        (s.type === 'TRANSFER_IN' || s.type === 'PICKUP') &&
+        s.status !== 'completed' &&
+        s.status !== 'skipped',
+    );
+    if (pendingPrereqs.length > 0) {
+      const labels = pendingPrereqs.map((s) => {
+        if (s.type === 'TRANSFER_IN' && s.linkedStopId) {
+          const linkedOut = stopStore.getStopById(s.linkedStopId);
+          const srcShip = linkedOut ? shipmentStore.getShipmentById(linkedOut.shipmentId) : null;
+          return `📥 Receive from ${srcShip?.id || 'feeder'}`;
+        }
+        return `📦 ${s.type} at ${s.location.name || s.location.city || 'TBD'}`;
+      });
       return {
         success: false,
-        message: `Cannot confirm receipt. Waiting for handovers from: ${pendingShipIds}`,
+        message: `Cannot deliver yet. Pending: ${labels.join(', ')}`,
       };
     }
   }
@@ -101,19 +118,18 @@ export function completeStop(
     }
   }
 
-  // 2b. If TRANSFER_OUT completes: check if ALL linked TRANSFER_OUTs for the same TRANSFER_IN are done
+  // 2b. If TRANSFER_OUT completes: in 1:1 model, this always means the paired handover is done
   let allHandoversDone = false;
   if (stop.type === 'TRANSFER_OUT' && stop.linkedStopId) {
-    const allStops = useStopStore.getState().stops;
-    const linkedTransferIn = allStops.find((s) => s.id === stop.linkedStopId);
-    if (linkedTransferIn && linkedTransferIn.type === 'TRANSFER_IN') {
-      // Find all TRANSFER_OUTs pointing to the same TRANSFER_IN
-      const allLinkedOuts = allStops.filter(
-        (s) => s.type === 'TRANSFER_OUT' && s.linkedStopId === linkedTransferIn.id,
-      );
-      allHandoversDone = allLinkedOuts.every(
-        (s) => s.id === stopId ? true : s.status === 'completed',
-      );
+    // 1:1 pair — completing this TRANSFER_OUT means its paired TRANSFER_IN can proceed
+    allHandoversDone = true;
+
+    // Auto-sync location to the paired TRANSFER_IN stop
+    const linkedIn = useStopStore.getState().getStopById(stop.linkedStopId);
+    if (linkedIn && linkedIn.type === 'TRANSFER_IN' && stop.location.name) {
+      useStopStore.getState().updateStop(linkedIn.id, {
+        location: { ...stop.location },
+      });
     }
   }
 
@@ -553,30 +569,13 @@ export function addStopToShipment(
     const linkedShipment = shipmentStore.getShipmentById(linkedShipmentId);
     if (!linkedShipment) return;
 
-    const load = loadStore.getLoadById(shipment.loadId);
-    const transferLocation = load ? { ...load.destination } : { name: 'Transfer Point', state: '', city: '', pin: '', address: '' };
+    // ALWAYS create a new 1:1 pair — never reuse an existing TRANSFER_IN
+    const transferLocation = { name: '', state: '', city: '', pin: '', address: '' };
 
-    // Create stop on this shipment
-    stopStore.addStop({
-      id: newStopId,
-      shipmentId,
-      sequence: insertSeq,
-      type,
-      location: transferLocation,
-      prId: '',
-      plannedItems: [],
-      actualItems: [],
-      totalActualQty: 0,
-      status: 'pending',
-    });
-
-    shipmentStore.updateShipment(shipmentId, {
-      stopIds: [...shipment.stopIds, newStopId],
-    });
-
-    // Create the paired stop on the linked shipment
+    // Create the paired stop on the linked shipment FIRST so we have its ID
     const linkedType = type === 'TRANSFER_OUT' ? 'TRANSFER_IN' : 'TRANSFER_OUT';
-    const linkedStopId = `STOP-${String(stopStore.stops.length + 1).padStart(3, '0')}`;
+    const pairedStopId = `STOP-${String(stopStore.stops.length + 2).padStart(3, '0')}`;
+
     const linkedShipStops = stopStore.stops
       .filter((s) => s.shipmentId === linkedShipmentId)
       .sort((a, b) => a.sequence - b.sequence);
@@ -592,12 +591,32 @@ export function addStopToShipment(
       }
     });
 
+    // Create stop on this shipment (TRANSFER_OUT → linked to pairedStopId on target)
     stopStore.addStop({
-      id: linkedStopId,
+      id: newStopId,
+      shipmentId,
+      sequence: insertSeq,
+      type,
+      location: { ...transferLocation },
+      prId: '',
+      plannedItems: [],
+      actualItems: [],
+      totalActualQty: 0,
+      linkedStopId: pairedStopId,
+      status: 'pending',
+    });
+
+    shipmentStore.updateShipment(shipmentId, {
+      stopIds: [...shipment.stopIds, newStopId],
+    });
+
+    // Create paired stop on linked shipment (TRANSFER_IN → linked to newStopId on source)
+    stopStore.addStop({
+      id: pairedStopId,
       shipmentId: linkedShipmentId,
       sequence: linkedInsertSeq,
       type: linkedType,
-      location: transferLocation,
+      location: { ...transferLocation },
       prId: '',
       plannedItems: [],
       actualItems: [],
@@ -606,11 +625,8 @@ export function addStopToShipment(
       status: 'pending',
     });
 
-    // Set linkedStopId on the first stop
-    stopStore.updateStop(newStopId, { linkedStopId });
-
     shipmentStore.updateShipment(linkedShipmentId, {
-      stopIds: [...linkedShipment.stopIds, linkedStopId],
+      stopIds: [...linkedShipment.stopIds, pairedStopId],
     });
   }
 }

@@ -441,6 +441,7 @@ export function FlowDiagram({
                     : undefined
                 }
                 isTransfer={edge.isTransfer}
+                transferLocation={edge.transferLocation}
               />
             );
           })}

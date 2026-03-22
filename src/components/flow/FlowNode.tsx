@@ -160,12 +160,26 @@ function ShipmentCard({
           ? 'bg-purple-100 text-purple-700'
           : 'bg-gray-100 text-text-secondary';
 
-  // Build route summary from stop cities in sequence order
+  // Build route summary from stops in sequence order with transfer icons
   const routeSummary = stops
     .slice()
     .sort((a, b) => a.sequence - b.sequence)
-    .map((s) => s.location.city)
-    .filter((city, idx, arr) => city && arr.indexOf(city) === idx) // deduplicate adjacent
+    .map((s) => {
+      const loc = s.location.name || s.location.city || 'TBD';
+      switch (s.type) {
+        case 'TRANSFER_OUT':
+          return `🤝 ${loc}`;
+        case 'TRANSFER_IN':
+          return `📥 ${loc}`;
+        case 'PICKUP':
+          return s.location.city || s.location.name;
+        case 'DELIVER':
+          return s.location.city || s.location.name;
+        default:
+          return s.location.city;
+      }
+    })
+    .filter(Boolean)
     .join(' → ');
 
   return (

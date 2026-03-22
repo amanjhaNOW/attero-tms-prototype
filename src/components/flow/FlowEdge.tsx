@@ -12,6 +12,8 @@ interface FlowEdgeProps {
   onDisconnect?: () => void;
   /** Whether this edge represents a transfer (ship→ship handover) */
   isTransfer?: boolean;
+  /** Transfer location name (from TRANSFER_OUT stop), shown on handover arrows */
+  transferLocation?: string;
 }
 
 interface PathCoords {
@@ -40,11 +42,18 @@ export function FlowEdge({
   toRef,
   containerRef,
   status,
-  label,
+  label: labelProp,
   layoutVersion,
   onDisconnect,
   isTransfer,
+  transferLocation,
 }: FlowEdgeProps) {
+  // For transfer edges, show the location in the label
+  const label = isTransfer && transferLocation
+    ? `🤝 ${transferLocation}`
+    : isTransfer && !transferLocation
+      ? '🤝 TBD'
+      : labelProp;
   const [coords, setCoords] = useState<PathCoords | null>(null);
   const [isHovered, setIsHovered] = useState(false);
 
@@ -98,6 +107,7 @@ export function FlowEdge({
 
   // Measure label width for transfer labels (longer text)
   const labelWidth = label ? Math.max(40, label.length * 7 + 12) : 40;
+  const isTransferDimmed = isTransfer && !transferLocation;
 
   return (
     <g
@@ -161,7 +171,8 @@ export function FlowEdge({
             y={labelY + 4}
             textAnchor="middle"
             className="text-[10px] font-medium"
-            fill={isTransfer ? '#92400E' : '#424242'}
+            fill={isTransfer ? (isTransferDimmed ? '#B4946E' : '#92400E') : '#424242'}
+            opacity={isTransferDimmed ? 0.6 : 1}
           >
             {label}
           </text>

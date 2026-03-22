@@ -28,6 +28,8 @@ export interface FlowEdgeData {
   stopType?: 'PICKUP' | 'DELIVER' | 'TRANSFER_IN' | 'TRANSFER_OUT';
   /** Whether this edge represents a transfer (ship→ship handover) */
   isTransfer?: boolean;
+  /** Transfer location name (from TRANSFER_OUT stop) for display on arrow */
+  transferLocation?: string;
 }
 
 export interface FlowLayoutResult {
@@ -289,7 +291,9 @@ function layoutMultiVehicle(
 }
 
 /**
- * Cross-Dock: [sources] → [feeders] → [hub] → [line-haul] → [destination] (5 cols)
+ * Cross-Dock: [sources] → [feeders] → [line-haul] → [destination] (4 cols)
+ * Each feeder→line-haul connection = 1 TRANSFER_OUT + 1 TRANSFER_IN (1:1 pair).
+ * Transfer edges go directly feeder→line-haul (no hub node needed).
  */
 function layoutCrossDock(
   load: Load,
@@ -332,21 +336,12 @@ function layoutCrossDock(
     });
   });
 
-  // Hub (col 3) — transfer point
-  nodes.push({
-    id: 'hub',
-    type: 'hub',
-    col: 3,
-    row: midRow,
-    data: { location: load.destination, label: 'Transfer Point' },
-  });
-
-  // Line-haul (col 4)
+  // Line-haul (col 3)
   if (lineHaul) {
     nodes.push({
       id: `shipment-${lineHaul.id}`,
       type: 'shipment',
-      col: 4,
+      col: 3,
       row: midRow,
       data: {
         shipment: lineHaul,
@@ -356,11 +351,11 @@ function layoutCrossDock(
     });
   }
 
-  // Destination (col 5)
+  // Destination (col 4)
   nodes.push({
     id: 'destination',
     type: 'destination',
-    col: 5,
+    col: 4,
     row: midRow,
     data: { destination: load.destination },
   });
@@ -388,42 +383,34 @@ function layoutCrossDock(
     }
   });
 
-  // Edges: feeder → hub
+  // Edges: each feeder → line-haul (1:1 TRANSFER_OUT → TRANSFER_IN pairs)
   feeders.forEach((f) => {
-    const transferOutStop = stops.find(
+    // Find all TRANSFER_OUT stops on this feeder
+    const transferOutStops = stops.filter(
       (s) => s.shipmentId === f.id && s.type === 'TRANSFER_OUT',
     );
-    edges.push({
-      id: `edge-ship-${f.id}-hub`,
-      fromNodeId: `shipment-${f.id}`,
-      toNodeId: 'hub',
-      label: '🤝 Handover',
-      status: edgeStatus(f),
-      stopId: transferOutStop?.id,
-      shipmentId: f.id,
-      stopType: 'TRANSFER_OUT',
-      isTransfer: true,
+
+    transferOutStops.forEach((outStop) => {
+      if (lineHaul) {
+        const transferLoc = outStop.location.name || '';
+        edges.push({
+          id: `edge-ship-${f.id}-to-${lineHaul.id}-${outStop.id}`,
+          fromNodeId: `shipment-${f.id}`,
+          toNodeId: `shipment-${lineHaul.id}`,
+          // Label is computed by FlowEdge from transferLocation
+          status: edgeStatus(f),
+          stopId: outStop.id,
+          shipmentId: f.id,
+          stopType: 'TRANSFER_OUT',
+          isTransfer: true,
+          transferLocation: transferLoc || undefined,
+        });
+      }
     });
   });
 
-  // Edge: hub → line-haul
+  // Edge: line-haul → destination
   if (lineHaul) {
-    const transferInStop = stops.find(
-      (s) => s.shipmentId === lineHaul.id && s.type === 'TRANSFER_IN',
-    );
-    edges.push({
-      id: `edge-hub-ship-${lineHaul.id}`,
-      fromNodeId: 'hub',
-      toNodeId: `shipment-${lineHaul.id}`,
-      label: '📥 Receive',
-      status: edgeStatus(lineHaul),
-      stopId: transferInStop?.id,
-      shipmentId: lineHaul.id,
-      stopType: 'TRANSFER_IN',
-      isTransfer: true,
-    });
-
-    // Edge: line-haul → destination
     const deliverStop = stops.find(
       (s) => s.shipmentId === lineHaul.id && s.type === 'DELIVER',
     );
@@ -438,7 +425,7 @@ function layoutCrossDock(
     });
   }
 
-  return { nodes, edges, columns: 5, maxRows: maxLeftRows };
+  return { nodes, edges, columns: 4, maxRows: maxLeftRows };
 }
 
 /**
