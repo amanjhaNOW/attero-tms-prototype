@@ -76,9 +76,24 @@ export function LoadList() {
         header: 'Pattern',
         render: (_val, row) => {
           const load = row as unknown as Load;
+          const label = load.patternLabel.replace(/_/g, ' ');
+          if (load.patternLabel === 'multi_vehicle') {
+            return (
+              <span className="inline-flex items-center gap-1 rounded-full bg-warning-50 px-2 py-0.5 text-xs font-bold text-warning capitalize">
+                🚛 {label}
+              </span>
+            );
+          }
+          if (load.patternLabel === 'milk_run') {
+            return (
+              <span className="inline-flex items-center gap-1 rounded-full bg-primary-50 px-2 py-0.5 text-xs font-bold text-primary capitalize">
+                🥛 {label}
+              </span>
+            );
+          }
           return (
             <span className="capitalize text-text-secondary">
-              {load.patternLabel.replace(/_/g, ' ')}
+              {label}
             </span>
           );
         },

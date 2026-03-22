@@ -2,12 +2,13 @@ import { useState, useMemo, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Send, XCircle } from 'lucide-react';
 import { PageHeader, SearchBar, TabBar, DataTable, StatusBadge } from '@/components';
-import { useShipmentStore, useStopStore, dispatchShipment, cancelShipment } from '@/stores';
+import { useShipmentStore, useStopStore, useLoadStore, dispatchShipment, cancelShipment } from '@/stores';
 import type { ColumnDef, TabItem, Shipment } from '@/types';
 
 export function ShipmentList() {
   const shipments = useShipmentStore((s) => s.shipments);
   const stops = useStopStore((s) => s.stops);
+  const loads = useLoadStore((s) => s.loads);
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState('all');
@@ -87,14 +88,23 @@ export function ShipmentList() {
         sortable: true,
         render: (_val, row) => {
           const sh = row as unknown as Shipment;
+          const load = loads.find((l) => l.id === sh.loadId);
+          const isMulti = load?.patternLabel === 'multi_vehicle';
           return (
-            <Link
-              to={`/loads/${sh.loadId}`}
-              className="text-sm text-primary hover:underline"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {sh.loadId}
-            </Link>
+            <div className="flex items-center gap-1.5">
+              <Link
+                to={`/loads/${sh.loadId}`}
+                className="text-sm text-primary hover:underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {sh.loadId}
+              </Link>
+              {isMulti && (
+                <span className="rounded-full bg-warning-50 px-1.5 py-0.5 text-[10px] font-bold text-warning" title="Multi-Vehicle Load">
+                  🚛
+                </span>
+              )}
+            </div>
           );
         },
       },
@@ -183,7 +193,7 @@ export function ShipmentList() {
         },
       },
     ],
-    [stops, handleDispatch, handleCancel]
+    [stops, loads, handleDispatch, handleCancel]
   );
 
   return (
