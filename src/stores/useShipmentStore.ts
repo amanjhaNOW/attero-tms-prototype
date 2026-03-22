@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { Shipment } from '@/types';
 import { mockShipments } from '@/data';
 
@@ -10,19 +11,24 @@ interface ShipmentState {
   getShipmentById: (id: string) => Shipment | undefined;
 }
 
-export const useShipmentStore = create<ShipmentState>((set, get) => ({
-  shipments: mockShipments,
-  addShipment: (shipment) =>
-    set((state) => ({ shipments: [...state.shipments, shipment] })),
-  updateShipment: (id, updates) =>
-    set((state) => ({
-      shipments: state.shipments.map((s) =>
-        s.id === id ? { ...s, ...updates } : s
-      ),
-    })),
-  deleteShipment: (id) =>
-    set((state) => ({
-      shipments: state.shipments.filter((s) => s.id !== id),
-    })),
-  getShipmentById: (id) => get().shipments.find((s) => s.id === id),
-}));
+export const useShipmentStore = create<ShipmentState>()(
+  persist(
+    (set, get) => ({
+      shipments: mockShipments,
+      addShipment: (shipment) =>
+        set((state) => ({ shipments: [...state.shipments, shipment] })),
+      updateShipment: (id, updates) =>
+        set((state) => ({
+          shipments: state.shipments.map((s) =>
+            s.id === id ? { ...s, ...updates } : s
+          ),
+        })),
+      deleteShipment: (id) =>
+        set((state) => ({
+          shipments: state.shipments.filter((s) => s.id !== id),
+        })),
+      getShipmentById: (id) => get().shipments.find((s) => s.id === id),
+    }),
+    { name: 'attero-tms-shipments-v1' }
+  )
+);
