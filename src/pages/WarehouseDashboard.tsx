@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { PageHeader, MetricCard, StatusBadge, EmptyState } from '@/components';
 import { useLoadStore, useShipmentStore, useStopStore, usePRStore } from '@/stores';
+import { createLoadFromWarehouse } from '@/lib/createLoadHelper';
+import type { Location } from '@/types';
 
 /** Represents a PR with material sitting at a warehouse */
 interface WarehouseRow {
@@ -22,6 +24,10 @@ interface WarehouseRow {
   pctAtPlant: number;
   inboundShipmentId: string;
   warehouseName: string;
+  warehouseCity: string;
+  warehouseState: string;
+  warehousePin: string;
+  warehouseAddress: string;
   arrivedAt: string;
   daysWaiting: number;
 }
@@ -42,7 +48,7 @@ export function WarehouseDashboard() {
     const rows: WarehouseRow[] = [];
 
     // Group DELIVER stops by prId and destination type
-    const prWarehouseQty: Record<string, { qty: number; shipmentId: string; warehouseName: string; arrivedAt: string; materials: { type: string; qty: number; unit: string }[] }> = {};
+    const prWarehouseQty: Record<string, { qty: number; shipmentId: string; warehouseName: string; warehouseCity: string; warehouseState: string; warehousePin: string; warehouseAddress: string; arrivedAt: string; materials: { type: string; qty: number; unit: string }[] }> = {};
     const prPlantQty: Record<string, number> = {};
 
     allStops.forEach((stop) => {
@@ -65,6 +71,10 @@ export function WarehouseDashboard() {
             qty: (existing?.qty ?? 0) + stopQty,
             shipmentId: stop.shipmentId,
             warehouseName: load.destination.name,
+            warehouseCity: load.destination.city,
+            warehouseState: load.destination.state,
+            warehousePin: load.destination.pin,
+            warehouseAddress: load.destination.address,
             arrivedAt: stop.completedAt ?? '',
             materials,
           };
@@ -114,6 +124,10 @@ export function WarehouseDashboard() {
         pctAtPlant: prTotalQty > 0 ? Math.round((plantQty / prTotalQty) * 100) : 0,
         inboundShipmentId: whData.shipmentId,
         warehouseName: whData.warehouseName,
+        warehouseCity: whData.warehouseCity,
+        warehouseState: whData.warehouseState,
+        warehousePin: whData.warehousePin,
+        warehouseAddress: whData.warehouseAddress,
         arrivedAt: whData.arrivedAt,
         daysWaiting,
       });
@@ -174,10 +188,28 @@ export function WarehouseDashboard() {
   }, [warehouseRows, selectedIds]);
 
   const handleCreateLoad = useCallback(() => {
-    const items = warehouseRows
-      .filter((r) => selectedIds.has(r.prId))
-      .map((r) => `${r.prId}:${r.qtyAtWarehouse}`);
-    navigate(`/loads/create?warehouseItems=${items.join(',')}`);
+    const selected = warehouseRows.filter((r) => selectedIds.has(r.prId));
+    if (selected.length === 0) return;
+
+    // Build warehouse source items for the helper
+    const warehouseSourceItems = selected.map((r) => ({
+      prId: r.prId,
+      clientName: r.clientName,
+      materials: r.materials,
+      maxQty: r.qtyAtWarehouse,
+      warehouseLocation: {
+        name: r.warehouseName,
+        state: r.warehouseState ?? '',
+        city: r.warehouseCity ?? '',
+        pin: r.warehousePin ?? '',
+        address: r.warehouseAddress ?? '',
+      } as Location,
+      inboundShipmentId: r.inboundShipmentId,
+    }));
+
+    const items = selected.map((r) => ({ prId: r.prId, qty: r.qtyAtWarehouse }));
+    const loadId = createLoadFromWarehouse(items, warehouseSourceItems);
+    navigate(`/loads/${loadId}`);
   }, [warehouseRows, selectedIds, navigate]);
 
   function getDaysColor(days: number): string {

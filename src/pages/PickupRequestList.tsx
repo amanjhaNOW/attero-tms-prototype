@@ -12,6 +12,7 @@ import {
   MaterialLineItems,
 } from '@/components';
 import { usePRStore, useReferenceStore } from '@/stores';
+import { createLoadFromPRs } from '@/lib/createLoadHelper';
 import type { ColumnDef, TabItem, PickupRequest, MaterialItem } from '@/types';
 
 // ── PR Creation Form State ───────────────────────────────────
@@ -268,7 +269,8 @@ export function PickupRequestList() {
   const handleCreateLoad = useCallback(() => {
     if (selectedPRs.length === 0) return;
     const prIds = selectedPRs.map((pr) => pr.id);
-    navigate(`/loads/create?prs=${prIds.join(',')}`);
+    const loadId = createLoadFromPRs(prIds);
+    navigate(`/loads/${loadId}`);
   }, [selectedPRs, navigate]);
 
   return (
