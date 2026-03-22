@@ -1,0 +1,74 @@
+import type { Client } from '@/types';
+
+export const mockClients: Client[] = [
+  {
+    id: 'CLT-001',
+    name: 'Daikin Airconditioning India Pvt Ltd',
+    address: {
+      name: 'Daikin India',
+      state: 'Gujarat',
+      city: 'Ahmedabad',
+      pin: '382210',
+      address: 'Plot No. 45, GIDC Estate, Sanand, Ahmedabad, Gujarat 382210',
+    },
+    contactPerson: 'Rajesh Sharma',
+    phone: '+91 9876543210',
+    materialTypes: ['E-waste', 'Copper', 'Iron'],
+  },
+  {
+    id: 'CLT-002',
+    name: 'Deloitte',
+    address: {
+      name: 'Deloitte Hyderabad',
+      state: 'Telangana',
+      city: 'Hyderabad',
+      pin: '500081',
+      address: '12th Floor, Building 10, Mindspace IT Park, Madhapur, Hyderabad 500081',
+    },
+    contactPerson: 'Priya Nair',
+    phone: '+91 9123456780',
+    materialTypes: ['E-waste', 'Li-ion Battery'],
+  },
+  {
+    id: 'CLT-003',
+    name: 'Mitsubishi Electric',
+    address: {
+      name: 'Mitsubishi Electric India',
+      state: 'Tamil Nadu',
+      city: 'Chennai',
+      pin: '600096',
+      address: 'No. 7, Rajiv Gandhi Salai, OMR, Perungudi, Chennai 600096',
+    },
+    contactPerson: 'Suresh Iyer',
+    phone: '+91 9988776655',
+    materialTypes: ['E-waste', 'Copper', 'Cobalt'],
+  },
+  {
+    id: 'CLT-004',
+    name: 'Dont Test',
+    address: {
+      name: 'Dont Test Office',
+      state: 'Haryana',
+      city: 'Gurugram',
+      pin: '122001',
+      address: 'Tower B, Sector 44, Institutional Area, Gurugram, Haryana 122001',
+    },
+    contactPerson: 'Amit Verma',
+    phone: '+91 9876501234',
+    materialTypes: ['Iron', 'E-waste'],
+  },
+  {
+    id: 'CLT-005',
+    name: 'Infosys',
+    address: {
+      name: 'Infosys Pune',
+      state: 'Maharashtra',
+      city: 'Pune',
+      pin: '411057',
+      address: 'Plot No. 1, Rajiv Gandhi Infotech Park, Hinjewadi Phase 1, Pune 411057',
+    },
+    contactPerson: 'Deepa Kulkarni',
+    phone: '+91 9871234567',
+    materialTypes: ['E-waste', 'Li-ion Battery', 'Iron'],
+  },
+];
