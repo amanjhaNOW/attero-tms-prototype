@@ -92,8 +92,13 @@ function ShipmentCard({
           ? 'Feeder'
           : 'Direct';
 
-  const pickupCount = stops.filter((s) => s.type === 'PICKUP').length;
-  const deliverCount = stops.filter((s) => s.type === 'DELIVER').length;
+  // Build route summary from stop cities in sequence order
+  const routeSummary = stops
+    .slice()
+    .sort((a, b) => a.sequence - b.sequence)
+    .map((s) => s.location.city)
+    .filter((city, idx, arr) => city && arr.indexOf(city) === idx) // deduplicate adjacent
+    .join(' → ');
 
   return (
     <div
@@ -119,10 +124,12 @@ function ShipmentCard({
         <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-text-secondary">
           {typeLabel}
         </span>
-        <span className="text-[10px] text-text-muted">
-          {pickupCount}P → {deliverCount}D
-        </span>
       </div>
+      {routeSummary && (
+        <p className="mt-1 text-[10px] text-text-muted truncate" title={routeSummary}>
+          {routeSummary}
+        </p>
+      )}
       {shipment.vehicleRegistration && (
         <p className="mt-1 text-[11px] text-text-muted truncate">
           🚛 {shipment.vehicleRegistration}

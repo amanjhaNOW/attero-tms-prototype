@@ -102,7 +102,8 @@ function layoutDirect(
 }
 
 /**
- * Milk Run / Warehouse Consolidation: N sources stacked → 1 shipment → 1 destination (3 cols)
+ * Milk Run / Warehouse Consolidation: N sources stacked → M shipments stacked → 1 destination (3 cols)
+ * When there's only 1 shipment, shipment is centered. With multiple shipments, they stack vertically.
  */
 function layoutMilkRun(
   load: Load,
@@ -112,8 +113,9 @@ function layoutMilkRun(
 ): FlowLayoutResult {
   const nodes: FlowNodeData[] = [];
   const edges: FlowEdgeData[] = [];
-  const sh = shipments[0];
   const sourceCount = prs.length || 1;
+  const shipCount = shipments.length || 1;
+  const maxRows = Math.max(sourceCount, shipCount);
 
   // Source nodes stacked vertically
   prs.forEach((pr, idx) => {
@@ -126,9 +128,9 @@ function layoutMilkRun(
     });
   });
 
-  // Shipment node centered vertically
-  const shipRow = Math.ceil(sourceCount / 2);
-  if (sh) {
+  // Shipment nodes — stacked if multiple, centered if single
+  shipments.forEach((sh, idx) => {
+    const shipRow = shipments.length === 1 ? Math.ceil(sourceCount / 2) : idx + 1;
     nodes.push({
       id: `shipment-${sh.id}`,
       type: 'shipment',
@@ -136,44 +138,48 @@ function layoutMilkRun(
       row: shipRow,
       data: { shipment: sh, stops: stops.filter((s) => s.shipmentId === sh.id) },
     });
-  }
+  });
 
   // Destination node centered
+  const destRow = Math.ceil(maxRows / 2);
   nodes.push({
     id: 'destination',
     type: 'destination',
     col: 3,
-    row: shipRow,
+    row: destRow,
     data: { destination: load.destination },
   });
 
-  // Edges: each source → shipment
+  // Edges: each source → each shipment that has a PICKUP for that PR
   prs.forEach((pr) => {
-    if (!sh) return;
-    const pickupStop = stops.find((s) => s.shipmentId === sh.id && s.type === 'PICKUP' && s.prId === pr.id);
-    const qty = pickupStop
-      ? pickupStop.plannedItems.reduce((s, i) => s + i.qty, 0)
-      : pr.materials.reduce((s, m) => s + m.plannedQty, 0);
-    edges.push({
-      id: `edge-source-${pr.id}-ship-${sh.id}`,
-      fromNodeId: `source-${pr.id}`,
-      toNodeId: `shipment-${sh.id}`,
-      label: `${(qty / 1000).toFixed(1)}T`,
-      status: edgeStatus(sh),
+    shipments.forEach((sh) => {
+      const pickupStop = stops.find(
+        (s) => s.shipmentId === sh.id && s.type === 'PICKUP' && s.prId === pr.id,
+      );
+      if (pickupStop) {
+        const qty = pickupStop.plannedItems.reduce((s, i) => s + i.qty, 0);
+        edges.push({
+          id: `edge-source-${pr.id}-ship-${sh.id}`,
+          fromNodeId: `source-${pr.id}`,
+          toNodeId: `shipment-${sh.id}`,
+          label: `${(qty / 1000).toFixed(1)}T`,
+          status: edgeStatus(sh),
+        });
+      }
     });
   });
 
-  // Shipment → destination
-  if (sh) {
+  // Each shipment → destination
+  shipments.forEach((sh) => {
     edges.push({
       id: `edge-ship-${sh.id}-dest`,
       fromNodeId: `shipment-${sh.id}`,
       toNodeId: 'destination',
       status: edgeStatus(sh),
     });
-  }
+  });
 
-  return { nodes, edges, columns: 3, maxRows: Math.max(sourceCount, 1) };
+  return { nodes, edges, columns: 3, maxRows: Math.max(maxRows, 1) };
 }
 
 /**

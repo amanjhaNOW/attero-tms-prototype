@@ -397,8 +397,17 @@ export function createEmptyLoad(destinationId?: string): string {
 }
 
 /**
+ * Check if a shipment is "synced" — has no TRANSFER_IN or TRANSFER_OUT stops.
+ * Synced shipments should all receive new PICKUP stops when a PR is added to the load.
+ */
+function isShipmentSynced(shipmentId: string): boolean {
+  const stops = useStopStore.getState().stops.filter((s) => s.shipmentId === shipmentId);
+  return !stops.some((s) => s.type === 'TRANSFER_IN' || s.type === 'TRANSFER_OUT');
+}
+
+/**
  * Add PRs as sources to an existing load.
- * Creates new PICKUP stops in existing shipment + updates DELIVER stop.
+ * Creates new PICKUP stops in ALL synced shipments + updates DELIVER stops.
  */
 export function addPRsToLoad(loadId: string, prIds: string[]): void {
   const loadStore = useLoadStore.getState();
@@ -409,14 +418,15 @@ export function addPRsToLoad(loadId: string, prIds: string[]): void {
   const load = loadStore.getLoadById(loadId);
   if (!load) return;
 
-  // Get or create the first shipment
-  let shipId = load.shipmentIds[0];
-  if (!shipId) {
+  // Find all synced shipments in this load (or create one if none exist)
+  let syncedShipmentIds = load.shipmentIds.filter((sid) => isShipmentSynced(sid));
+
+  if (syncedShipmentIds.length === 0) {
     // Create a new shipment for this load
     const shipNum = shipmentStore.shipments.length + 1;
-    shipId = `SHP-${String(shipNum).padStart(3, '0')}`;
+    const newShipId = `SHP-${String(shipNum).padStart(3, '0')}`;
     shipmentStore.addShipment({
-      id: shipId,
+      id: newShipId,
       loadId: loadId,
       scheduledPickupDate: new Date().toISOString().split('T')[0],
       transportMode: 'carrier_third_party',
@@ -432,122 +442,136 @@ export function addPRsToLoad(loadId: string, prIds: string[]): void {
       createdAt: new Date().toISOString(),
     });
     loadStore.updateLoad(loadId, {
-      shipmentIds: [shipId],
+      shipmentIds: [...load.shipmentIds, newShipId],
     });
+    syncedShipmentIds = [newShipId];
   }
 
-  const shipStops = stopStore.stops
-    .filter((s) => s.shipmentId === shipId)
-    .sort((a, b) => a.sequence - b.sequence);
-
-  const deliverStop = shipStops.find((s) => s.type === 'DELIVER');
-  const pickupStops = shipStops.filter((s) => s.type === 'PICKUP');
-  let nextSeq = pickupStops.length + 1;
-  const newStopIds: string[] = [];
+  // Filter new PRs (skip already-in-load)
   const newPrIds: string[] = [];
   let addedQty = 0;
 
   prIds.forEach((prId) => {
-    if (load.prIds.includes(prId)) return; // already in load
+    if (load.prIds.includes(prId)) return;
     const pr = prStore.pickupRequests.find((p) => p.id === prId);
     if (!pr) return;
-
-    const pickupStopId = `STOP-${String(stopStore.stops.length + newStopIds.length + 1).padStart(3, '0')}`;
-    newStopIds.push(pickupStopId);
     newPrIds.push(prId);
-
-    const prQty = pr.materials.reduce((s, m) => s + m.plannedQty, 0);
-    addedQty += prQty;
-
-    stopStore.addStop({
-      id: pickupStopId,
-      shipmentId: shipId,
-      sequence: nextSeq,
-      type: 'PICKUP',
-      location: {
-        name: pr.pickupLocation.name,
-        state: pr.pickupLocation.state,
-        city: pr.pickupLocation.city,
-        pin: pr.pickupLocation.pin,
-        address: pr.pickupLocation.address,
-      },
-      prId: pr.id,
-      plannedItems: pr.materials.map((m) => ({
-        material: m.type,
-        qty: m.plannedQty,
-        unit: m.unit,
-      })),
-      actualItems: [],
-      totalActualQty: 0,
-      status: 'pending',
-    });
-    nextSeq += 1;
+    addedQty += pr.materials.reduce((s, m) => s + m.plannedQty, 0);
   });
 
   if (newPrIds.length === 0) return;
 
-  // If no deliver stop exists, create one
-  if (!deliverStop) {
-    const deliverStopId = `STOP-${String(stopStore.stops.length + newStopIds.length + 1).padStart(3, '0')}`;
-    const allPrIdsNow = [...load.prIds, ...newPrIds];
-    const allPRs = allPrIdsNow
-      .map((id) => prStore.pickupRequests.find((p) => p.id === id))
-      .filter(Boolean);
-    const allPlannedItems = allPRs.flatMap((pr) =>
-      pr!.materials.map((m) => ({
-        material: m.type,
-        qty: m.plannedQty,
-        unit: m.unit,
-      })),
-    );
+  // Global stop counter for unique IDs
+  let stopCounter = stopStore.stops.length + 1;
 
-    stopStore.addStop({
-      id: deliverStopId,
-      shipmentId: shipId,
-      sequence: nextSeq,
-      type: 'DELIVER',
-      location: {
-        name: load.destination.name,
-        state: load.destination.state,
-        city: load.destination.city,
-        pin: load.destination.pin,
-        address: load.destination.address,
-      },
-      prId: allPrIdsNow.length === 1 ? allPrIdsNow[0] : '',
-      plannedItems: allPlannedItems,
-      actualItems: [],
-      totalActualQty: 0,
-      linkedStopId: newStopIds[0],
-      status: 'pending',
-    });
-    newStopIds.push(deliverStopId);
-  } else {
-    // Update deliver stop sequence and planned items
-    const allPrIdsNow = [...load.prIds, ...newPrIds];
-    const allPRs = allPrIdsNow
-      .map((id) => prStore.pickupRequests.find((p) => p.id === id))
-      .filter(Boolean);
-    const allPlannedItems = allPRs.flatMap((pr) =>
-      pr!.materials.map((m) => ({
-        material: m.type,
-        qty: m.plannedQty,
-        unit: m.unit,
-      })),
-    );
-    stopStore.updateStop(deliverStop.id, {
-      sequence: nextSeq,
-      plannedItems: allPlannedItems,
-      prId: allPrIdsNow.length === 1 ? allPrIdsNow[0] : '',
-    });
-  }
+  // For each synced shipment, add PICKUP stops for each new PR
+  syncedShipmentIds.forEach((shipId) => {
+    const shipStops = stopStore.stops
+      .filter((s) => s.shipmentId === shipId)
+      .sort((a, b) => a.sequence - b.sequence);
 
-  // Update shipment stop IDs
-  const shipment = shipmentStore.getShipmentById(shipId);
-  if (shipment) {
-    shipmentStore.updateShipment(shipId, {
-      stopIds: [...shipment.stopIds, ...newStopIds],
+    const deliverStop = shipStops.find((s) => s.type === 'DELIVER');
+    const pickupStops = shipStops.filter((s) => s.type === 'PICKUP');
+    let nextSeq = pickupStops.length + 1;
+    const newStopIdsForShipment: string[] = [];
+
+    newPrIds.forEach((prId) => {
+      const pr = prStore.pickupRequests.find((p) => p.id === prId);
+      if (!pr) return;
+
+      const pickupStopId = `STOP-${String(stopCounter).padStart(3, '0')}`;
+      stopCounter += 1;
+      newStopIdsForShipment.push(pickupStopId);
+
+      stopStore.addStop({
+        id: pickupStopId,
+        shipmentId: shipId,
+        sequence: nextSeq,
+        type: 'PICKUP',
+        location: {
+          name: pr.pickupLocation.name,
+          state: pr.pickupLocation.state,
+          city: pr.pickupLocation.city,
+          pin: pr.pickupLocation.pin,
+          address: pr.pickupLocation.address,
+        },
+        prId: pr.id,
+        plannedItems: pr.materials.map((m) => ({
+          material: m.type,
+          qty: m.plannedQty,
+          unit: m.unit,
+        })),
+        actualItems: [],
+        totalActualQty: 0,
+        status: 'pending',
+      });
+      nextSeq += 1;
     });
-  }
+
+    const allPrIdsNow = [...load.prIds, ...newPrIds];
+
+    if (!deliverStop) {
+      // Create DELIVER stop
+      const deliverStopId = `STOP-${String(stopCounter).padStart(3, '0')}`;
+      stopCounter += 1;
+      const allPRs = allPrIdsNow
+        .map((id) => prStore.pickupRequests.find((p) => p.id === id))
+        .filter(Boolean);
+      const allPlannedItems = allPRs.flatMap((pr) =>
+        pr!.materials.map((m) => ({
+          material: m.type,
+          qty: m.plannedQty,
+          unit: m.unit,
+        })),
+      );
+
+      stopStore.addStop({
+        id: deliverStopId,
+        shipmentId: shipId,
+        sequence: nextSeq,
+        type: 'DELIVER',
+        location: {
+          name: load.destination.name,
+          state: load.destination.state,
+          city: load.destination.city,
+          pin: load.destination.pin,
+          address: load.destination.address,
+        },
+        prId: allPrIdsNow.length === 1 ? allPrIdsNow[0] : '',
+        plannedItems: allPlannedItems,
+        actualItems: [],
+        totalActualQty: 0,
+        linkedStopId: newStopIdsForShipment[0],
+        status: 'pending',
+      });
+      newStopIdsForShipment.push(deliverStopId);
+    } else {
+      // Update existing deliver stop sequence and planned items
+      const allPRs = allPrIdsNow
+        .map((id) => prStore.pickupRequests.find((p) => p.id === id))
+        .filter(Boolean);
+      const allPlannedItems = allPRs.flatMap((pr) =>
+        pr!.materials.map((m) => ({
+          material: m.type,
+          qty: m.plannedQty,
+          unit: m.unit,
+        })),
+      );
+      stopStore.updateStop(deliverStop.id, {
+        sequence: nextSeq,
+        plannedItems: allPlannedItems,
+        prId: allPrIdsNow.length === 1 ? allPrIdsNow[0] : '',
+      });
+    }
+
+    // Update shipment stop IDs
+    const shipment = shipmentStore.getShipmentById(shipId);
+    if (shipment) {
+      shipmentStore.updateShipment(shipId, {
+        stopIds: [...shipment.stopIds, ...newStopIdsForShipment],
+      });
+    }
+  });
 
   // Determine new pattern
   const allPrIdsNow = [...load.prIds, ...newPrIds];
