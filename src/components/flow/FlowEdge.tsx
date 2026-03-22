@@ -48,12 +48,15 @@ export function FlowEdge({
   isTransfer,
   transferLocation,
 }: FlowEdgeProps) {
-  // For transfer edges, show the location in the label
-  const label = isTransfer && transferLocation
-    ? `🤝 ${transferLocation}`
-    : isTransfer && !transferLocation
-      ? '🤝 TBD'
-      : labelProp;
+  // For transfer edges, show the handover icon + qty + location
+  const label = isTransfer
+    ? (() => {
+        const parts = ['🤝'];
+        if (labelProp) parts.push(labelProp);
+        if (transferLocation) parts.push(transferLocation);
+        return parts.length > 1 ? parts.join(' ') : '🤝 TBD';
+      })()
+    : labelProp;
   const [coords, setCoords] = useState<PathCoords | null>(null);
   const [isHovered, setIsHovered] = useState(false);
 
@@ -107,7 +110,7 @@ export function FlowEdge({
 
   // Measure label width for transfer labels (longer text)
   const labelWidth = label ? Math.max(40, label.length * 7 + 12) : 40;
-  const isTransferDimmed = isTransfer && !transferLocation;
+  const isTransferDimmed = isTransfer && !transferLocation && !labelProp;
 
   return (
     <g

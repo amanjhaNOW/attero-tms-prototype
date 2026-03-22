@@ -10,6 +10,8 @@ interface FlowNodeProps {
   onClick?: () => void;
   selected?: boolean;
   onRemove?: () => void;
+  /** Called to delete a shipment from the load */
+  onDeleteShipment?: () => void;
   /** Called when user clicks the output port (right side) to start a connection */
   onStartConnect?: (nodeId: string) => void;
   /** Called when user clicks the input port (left side) to complete a connection */
@@ -130,12 +132,14 @@ function ShipmentCard({
   role,
   selected,
   onClick,
+  onDelete,
 }: {
   shipment: Shipment;
   stops: Stop[];
   role?: string;
   selected?: boolean;
   onClick?: () => void;
+  onDelete?: () => void;
 }) {
   // Auto-detect role from stops
   const hasTransferOut = stops.some((s) => s.type === 'TRANSFER_OUT');
@@ -182,15 +186,33 @@ function ShipmentCard({
     .filter(Boolean)
     .join(' → ');
 
+  // BUG 7: Detect empty/hint states (reuse hasTransferOut/hasTransferIn from above)
+  const hasPickups = stops.some((s) => s.type === 'PICKUP');
+  const hasDeliver = stops.some((s) => s.type === 'DELIVER');
+  const isEmptyTruck = stops.length === 0;
+  const isLineHaulOnlyDeliver = !hasPickups && !hasTransferIn && hasDeliver && stops.length === 1;
+
   return (
     <div
       onClick={onClick}
-      className={`w-[200px] cursor-pointer rounded-lg border-2 bg-white px-3 py-2.5 shadow-sm transition-all hover:shadow-md ${
+      className={`relative w-[200px] cursor-pointer rounded-lg border-2 bg-white px-3 py-2.5 shadow-sm transition-all hover:shadow-md group/shipcard ${
         selected
           ? 'border-primary bg-primary-50/30 shadow-primary-100'
           : 'border-gray-200 hover:border-primary-300'
       }`}
     >
+      {/* BUG 1: Delete button for draft shipments */}
+      {onDelete && shipment.status === 'draft' && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-400 hover:text-red-500 hover:border-red-400 text-xs z-20 opacity-0 group-hover/shipcard:opacity-100 transition-opacity shadow-sm"
+        >
+          ✕
+        </button>
+      )}
       <div className="flex items-center gap-2">
         <Truck className="h-4 w-4 text-primary shrink-0" />
         <Link
@@ -210,6 +232,17 @@ function ShipmentCard({
       {routeSummary && (
         <p className="mt-1 text-[10px] text-text-muted truncate" title={routeSummary}>
           {routeSummary}
+        </p>
+      )}
+      {/* BUG 7: Empty shipment hints */}
+      {isLineHaulOnlyDeliver && (
+        <p className="mt-1 text-[10px] text-blue-500 italic">
+          Connect feeders to this truck
+        </p>
+      )}
+      {isEmptyTruck && (
+        <p className="mt-1 text-[10px] text-gray-400 italic">
+          Use connections to build this truck's route
         </p>
       )}
       {shipment.vehicleRegistration && (
@@ -281,6 +314,7 @@ export const FlowNode = forwardRef<HTMLDivElement, FlowNodeProps>(
       onClick,
       selected,
       onRemove,
+      onDeleteShipment,
       onStartConnect,
       onCompleteConnect,
       isConnecting,
@@ -321,6 +355,7 @@ export const FlowNode = forwardRef<HTMLDivElement, FlowNodeProps>(
               role={role}
               selected={selected}
               onClick={onClick}
+              onDelete={onDeleteShipment}
             />
           );
         }

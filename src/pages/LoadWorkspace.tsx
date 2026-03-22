@@ -48,6 +48,21 @@ export function LoadWorkspace() {
     [load?.prIds, prs],
   );
 
+  // BUG 6: Detect PRs with no PICKUP stop on any shipment in this load
+  const unconnectedPRs = useMemo(() => {
+    if (!load) return [];
+    return linkedPRs.filter((pr) => {
+      if (!pr) return false;
+      const hasPickup = allStops.some(
+        (s) =>
+          s.prId === pr.id &&
+          s.type === 'PICKUP' &&
+          shipments.some((sh) => sh.id === s.shipmentId),
+      );
+      return !hasPickup;
+    });
+  }, [linkedPRs, allStops, shipments, load]);
+
   // Picker modals
   const [prPickerOpen, setPRPickerOpen] = useState(false);
   const [whPickerOpen, setWHPickerOpen] = useState(false);
@@ -431,6 +446,18 @@ export function LoadWorkspace() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ── C2. Unconnected PR Warning ────────────── */}
+      {unconnectedPRs.length > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
+          <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+          <span>
+            <strong>{unconnectedPRs.length} PR{unconnectedPRs.length !== 1 ? 's have' : ' has'} no pickup assigned:</strong>{' '}
+            {unconnectedPRs.map((pr) => pr?.id).filter(Boolean).join(', ')}.{' '}
+            Connect them to a truck or remove from load.
+          </span>
         </div>
       )}
 

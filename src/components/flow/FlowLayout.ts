@@ -393,11 +393,12 @@ function layoutCrossDock(
     transferOutStops.forEach((outStop) => {
       if (lineHaul) {
         const transferLoc = outStop.location.name || '';
+        const transferQty = outStop.plannedItems.reduce((sum, item) => sum + item.qty, 0);
         edges.push({
           id: `edge-ship-${f.id}-to-${lineHaul.id}-${outStop.id}`,
           fromNodeId: `shipment-${f.id}`,
           toNodeId: `shipment-${lineHaul.id}`,
-          // Label is computed by FlowEdge from transferLocation
+          label: transferQty > 0 ? `${(transferQty / 1000).toFixed(1)}T` : undefined,
           status: edgeStatus(f),
           stopId: outStop.id,
           shipmentId: f.id,
@@ -429,6 +430,56 @@ function layoutCrossDock(
 }
 
 /**
+ * Post-process: add transfer edges for any TRANSFER_OUT stops not already covered by layout.
+ * This ensures ship→ship handover arrows appear even in non-cross-dock patterns.
+ */
+function addMissingTransferEdges(
+  result: FlowLayoutResult,
+  shipments: Shipment[],
+  stops: Stop[],
+): FlowLayoutResult {
+  const existingTransferEdgeStopIds = new Set(
+    result.edges.filter((e) => e.isTransfer).map((e) => e.stopId),
+  );
+
+  stops
+    .filter((s) => s.type === 'TRANSFER_OUT' && !existingTransferEdgeStopIds.has(s.id))
+    .forEach((outStop) => {
+      if (!outStop.linkedStopId) return;
+      const inStop = stops.find((s) => s.id === outStop.linkedStopId);
+      if (!inStop) return;
+
+      const sourceShipment = shipments.find((sh) => sh.id === outStop.shipmentId);
+      const targetShipment = shipments.find((sh) => sh.id === inStop.shipmentId);
+      if (!sourceShipment || !targetShipment) return;
+
+      const fromNodeId = `shipment-${sourceShipment.id}`;
+      const toNodeId = `shipment-${targetShipment.id}`;
+
+      // Only add if both nodes exist in the layout
+      if (!result.nodes.some((n) => n.id === fromNodeId) || !result.nodes.some((n) => n.id === toNodeId)) return;
+
+      const transferLoc = outStop.location.name || '';
+      const transferQty = outStop.plannedItems.reduce((sum, item) => sum + item.qty, 0);
+
+      result.edges.push({
+        id: `edge-ship-${sourceShipment.id}-to-${targetShipment.id}-${outStop.id}`,
+        fromNodeId,
+        toNodeId,
+        label: transferQty > 0 ? `${(transferQty / 1000).toFixed(1)}T` : undefined,
+        status: edgeStatus(sourceShipment),
+        stopId: outStop.id,
+        shipmentId: sourceShipment.id,
+        stopType: 'TRANSFER_OUT',
+        isTransfer: true,
+        transferLocation: transferLoc || undefined,
+      });
+    });
+
+  return result;
+}
+
+/**
  * Main entry point: compute the flow layout based on load pattern.
  */
 export function computeFlowLayout(
@@ -437,24 +488,35 @@ export function computeFlowLayout(
   stops: Stop[],
   prs: PickupRequest[],
 ): FlowLayoutResult {
+  let result: FlowLayoutResult;
+
   switch (load.patternLabel) {
     case 'direct':
-      return layoutDirect(load, shipments, stops, prs);
+      result = layoutDirect(load, shipments, stops, prs);
+      break;
 
     case 'milk_run':
-      return layoutMilkRun(load, shipments, stops, prs);
+      result = layoutMilkRun(load, shipments, stops, prs);
+      break;
 
     case 'warehouse_consolidation':
-      return layoutMilkRun(load, shipments, stops, prs);
+      result = layoutMilkRun(load, shipments, stops, prs);
+      break;
 
     case 'multi_vehicle':
-      return layoutMultiVehicle(load, shipments, stops, prs);
+      result = layoutMultiVehicle(load, shipments, stops, prs);
+      break;
 
     case 'cross_dock':
     case 'cross_dock_milk_run':
-      return layoutCrossDock(load, shipments, stops, prs);
+      result = layoutCrossDock(load, shipments, stops, prs);
+      break;
 
     default:
-      return layoutDirect(load, shipments, stops, prs);
+      result = layoutDirect(load, shipments, stops, prs);
+      break;
   }
+
+  // Add any transfer edges not already produced by the pattern-specific layout
+  return addMissingTransferEdges(result, shipments, stops);
 }

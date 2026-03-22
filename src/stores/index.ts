@@ -15,5 +15,6 @@ export {
   isShipmentSynced,
   removeStopFromShipment,
   addStopToShipment,
+  removeShipmentFromLoad,
 } from './useCascadeEngine';
 export type { CompleteStopResult } from './useCascadeEngine';

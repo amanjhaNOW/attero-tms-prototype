@@ -11,7 +11,7 @@ import { computeFlowLayout } from './FlowLayout';
 import type { FlowNodeData } from './FlowLayout';
 import { FlowNode } from './FlowNode';
 import { FlowEdge } from './FlowEdge';
-import { addStopToShipment, removeStopFromShipment, autoRemoveFeederDeliver } from '@/stores';
+import { addStopToShipment, removeStopFromShipment, autoRemoveFeederDeliver, removeShipmentFromLoad, useStopStore } from '@/stores';
 
 interface FlowDiagramProps {
   load: Load;
@@ -150,6 +150,13 @@ export function FlowDiagram({
     [onShipmentClick],
   );
 
+  const handleDeleteShipment = useCallback(
+    (shipmentId: string) => {
+      removeShipmentFromLoad(shipmentId);
+    },
+    [],
+  );
+
   // ── Connection Logic ────────────────────────────
 
   /** Determine the entity ID from a node */
@@ -284,11 +291,23 @@ export function FlowDiagram({
     [connectingFrom, layout.nodes, stops, isValidTarget],
   );
 
-  /** Disconnect an edge by removing its stop */
+  /** Disconnect an edge by removing its stop (handles all stop types including TRANSFER pairs and DELIVER) */
   const handleDisconnect = useCallback(
     (stopId: string | undefined) => {
       if (!stopId) return;
-      removeStopFromShipment(stopId);
+      const stop = useStopStore.getState().getStopById(stopId);
+      if (!stop) return;
+
+      if (stop.type === 'TRANSFER_OUT' || stop.type === 'TRANSFER_IN') {
+        // Remove both sides of the transfer pair
+        if (stop.linkedStopId) {
+          removeStopFromShipment(stop.linkedStopId);
+        }
+        removeStopFromShipment(stop.id);
+      } else {
+        // PICKUP or DELIVER — just remove the stop
+        removeStopFromShipment(stop.id);
+      }
     },
     [],
   );
@@ -407,6 +426,11 @@ export function FlowDiagram({
                   onRemove={
                     node.type === 'source' && isDraft
                       ? () => onRemoveSource((node.data.pr as PickupRequest).id)
+                      : undefined
+                  }
+                  onDeleteShipment={
+                    node.type === 'shipment' && isDraft
+                      ? () => handleDeleteShipment((node.data.shipment as Shipment).id)
                       : undefined
                   }
                   onStartConnect={isDraft ? handleStartConnect : undefined}

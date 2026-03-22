@@ -599,6 +599,24 @@ export function addStopToShipment(
       }
     });
 
+    // ── BUG 3 FIX: Aggregate material qty from PICKUP stops on source shipment ──
+    const sourceShipmentId = type === 'TRANSFER_OUT' ? shipmentId : linkedShipmentId;
+    const targetShipmentId = type === 'TRANSFER_OUT' ? linkedShipmentId : shipmentId;
+    const allStops = stopStore.stops;
+    const pickupStops = allStops.filter(
+      (s) => s.shipmentId === sourceShipmentId && s.type === 'PICKUP',
+    );
+    const aggregatedItems: { material: string; qty: number; unit: string }[] = [];
+    pickupStops.forEach((ps) => {
+      ps.plannedItems.forEach((item) => {
+        const existing = aggregatedItems.find(
+          (a) => a.material === item.material && a.unit === item.unit,
+        );
+        if (existing) existing.qty += item.qty;
+        else aggregatedItems.push({ material: item.material, qty: item.qty, unit: item.unit });
+      });
+    });
+
     // Create stop on this shipment (TRANSFER_OUT → linked to pairedStopId on target)
     stopStore.addStop({
       id: newStopId,
@@ -607,7 +625,7 @@ export function addStopToShipment(
       type,
       location: { ...transferLocation },
       prId: '',
-      plannedItems: [],
+      plannedItems: aggregatedItems.map((i) => ({ ...i })),
       actualItems: [],
       totalActualQty: 0,
       linkedStopId: pairedStopId,
@@ -626,7 +644,7 @@ export function addStopToShipment(
       type: linkedType,
       location: { ...transferLocation },
       prId: '',
-      plannedItems: [],
+      plannedItems: aggregatedItems.map((i) => ({ ...i })),
       actualItems: [],
       totalActualQty: 0,
       linkedStopId: newStopId,
@@ -636,6 +654,29 @@ export function addStopToShipment(
     shipmentStore.updateShipment(linkedShipmentId, {
       stopIds: [...linkedShipment.stopIds, pairedStopId],
     });
+
+    // ── BUG 3 FIX: Update the target shipment's DELIVER stop with aggregated TRANSFER_IN items ──
+    const refreshedStops = stopStore.stops;
+    const targetDeliverStop = refreshedStops.find(
+      (s) => s.shipmentId === targetShipmentId && s.type === 'DELIVER',
+    );
+    if (targetDeliverStop) {
+      // Aggregate all TRANSFER_IN planned items already on the target shipment
+      const allReceives = refreshedStops.filter(
+        (s) => s.shipmentId === targetShipmentId && s.type === 'TRANSFER_IN',
+      );
+      const deliverItems: { material: string; qty: number; unit: string }[] = [];
+      allReceives.forEach((r) => {
+        r.plannedItems.forEach((item) => {
+          const existing = deliverItems.find(
+            (a) => a.material === item.material && a.unit === item.unit,
+          );
+          if (existing) existing.qty += item.qty;
+          else deliverItems.push({ material: item.material, qty: item.qty, unit: item.unit });
+        });
+      });
+      stopStore.updateStop(targetDeliverStop.id, { plannedItems: deliverItems });
+    }
   }
 }
 
@@ -754,6 +795,52 @@ export function addEmptyShipmentToLoad(loadId: string) {
     shipmentIds: [...load.shipmentIds, shipId],
     status: load.status === 'fully_planned' ? 'partially_planned' : load.status,
   });
+}
+
+/**
+ * Remove a shipment from its load entirely.
+ * Cleans up all stops (including paired TRANSFER stops on linked shipments).
+ * Only works for draft shipments.
+ */
+export function removeShipmentFromLoad(shipmentId: string) {
+  const stopStore = useStopStore.getState();
+  const shipmentStore = useShipmentStore.getState();
+  const loadStore = useLoadStore.getState();
+
+  const shipment = shipmentStore.getShipmentById(shipmentId);
+  if (!shipment || shipment.status !== 'draft') return;
+
+  const stops = stopStore.stops.filter((s) => s.shipmentId === shipmentId);
+
+  // Delete paired TRANSFER stops on linked shipments
+  stops.forEach((stop) => {
+    if (stop.linkedStopId) {
+      const linkedStop = stopStore.getStopById(stop.linkedStopId);
+      if (linkedStop && linkedStop.shipmentId !== shipmentId) {
+        // Remove linked stop from its shipment's stopIds
+        const linkedShip = shipmentStore.getShipmentById(linkedStop.shipmentId);
+        if (linkedShip) {
+          shipmentStore.updateShipment(linkedShip.id, {
+            stopIds: linkedShip.stopIds.filter((id) => id !== linkedStop.id),
+          });
+        }
+        stopStore.deleteStop(linkedStop.id);
+      }
+    }
+    stopStore.deleteStop(stop.id);
+  });
+
+  // Delete shipment
+  shipmentStore.deleteShipment(shipmentId);
+
+  // Update load
+  const load = loadStore.getLoadById(shipment.loadId);
+  if (load) {
+    loadStore.updateLoad(load.id, {
+      shipmentIds: load.shipmentIds.filter((id) => id !== shipmentId),
+      // Don't auto-remove PRs from load — they stay for reassignment
+    });
+  }
 }
 
 /**
