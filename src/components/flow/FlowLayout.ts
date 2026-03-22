@@ -384,27 +384,28 @@ function layoutCrossDock(
     data: { destination: load.destination },
   });
 
-  // Edges: source → feeder (match by PR)
+  // Edges: source → any shipment that has a PICKUP for this PR (feeders AND line-haul)
   prs.forEach((pr) => {
-    const feeder = allFeeders.find((f) => {
-      const fStops = stops.filter((s) => s.shipmentId === f.id && s.type === 'PICKUP');
-      return fStops.some((s) => s.prId === pr.id);
-    });
-    if (feeder) {
+    const allShips = [...allFeeders, ...(lineHaul ? [lineHaul] : [])];
+    allShips.forEach((sh) => {
       const pickupStop = stops.find(
-        (s) => s.shipmentId === feeder.id && s.type === 'PICKUP' && s.prId === pr.id,
+        (s) => s.shipmentId === sh.id && s.type === 'PICKUP' && s.prId === pr.id,
       );
-      edges.push({
-        id: `edge-source-${pr.id}-ship-${feeder.id}`,
-        fromNodeId: `source-${pr.id}`,
-        toNodeId: `shipment-${feeder.id}`,
-        status: edgeStatus(feeder),
-        stopId: pickupStop?.id,
-        prId: pr.id,
-        shipmentId: feeder.id,
-        stopType: 'PICKUP',
-      });
-    }
+      if (pickupStop) {
+        const qty = pickupStop.plannedItems.reduce((sum, i) => sum + i.qty, 0);
+        edges.push({
+          id: `edge-source-${pr.id}-ship-${sh.id}`,
+          fromNodeId: `source-${pr.id}`,
+          toNodeId: `shipment-${sh.id}`,
+          label: `${(qty / 1000).toFixed(1)}T`,
+          status: edgeStatus(sh),
+          stopId: pickupStop.id,
+          prId: pr.id,
+          shipmentId: sh.id,
+          stopType: 'PICKUP',
+        });
+      }
+    });
   });
 
   // Edges: each feeder → line-haul (1:1 TRANSFER_OUT → TRANSFER_IN pairs)
