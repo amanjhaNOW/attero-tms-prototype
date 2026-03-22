@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import {
   Boxes,
@@ -8,6 +8,9 @@ import {
   ClipboardList,
   X,
   Search,
+  Plus,
+  ArrowRight,
+  ChevronRight,
 } from 'lucide-react';
 import { PageHeader, EmptyState } from '@/components';
 import {
@@ -19,17 +22,67 @@ import {
 } from '@/stores';
 import type { PickupRequest, Location } from '@/types';
 
-/** Warehouse source item — a PR with material sitting at a warehouse */
+/* ────────────────────────────────────────────────────────────
+ * Types
+ * ──────────────────────────────────────────────────────────── */
+
 interface WarehouseSourceItem {
   prId: string;
   clientName: string;
   materials: { type: string; qty: number; unit: string }[];
-  maxQty: number; // how much is available at warehouse
+  maxQty: number;
   daysWaiting: number;
   warehouseName: string;
   warehouseLocation: Location;
   inboundShipmentId: string;
 }
+
+type PickerMode = null | 'pr' | 'warehouse';
+
+/* ────────────────────────────────────────────────────────────
+ * Modal Overlay
+ * ──────────────────────────────────────────────────────────── */
+
+function ModalOverlay({
+  open,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const backdropRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      ref={backdropRef}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === backdropRef.current) onClose();
+      }}
+    >
+      <div className="relative mx-4 flex max-h-[75vh] w-full max-w-[600px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────
+ * CreateLoad Page
+ * ──────────────────────────────────────────────────────────── */
 
 export function CreateLoad() {
   const navigate = useNavigate();
@@ -37,6 +90,7 @@ export function CreateLoad() {
   const prIdsParam = searchParams.get('prs');
   const warehouseItemsParam = searchParams.get('warehouseItems');
 
+  /* ── Store hooks ──────────────────────────────── */
   const allPRs = usePRStore((s) => s.pickupRequests);
   const updatePR = usePRStore((s) => s.updatePR);
   const addLoad = useLoadStore((s) => s.addLoad);
@@ -51,25 +105,26 @@ export function CreateLoad() {
 
   const plantAndWarehouseLocations = useMemo(
     () => locations.filter((l) => l.type === 'plant' || l.type === 'warehouse'),
-    [locations]
+    [locations],
   );
 
-  // Determine initial tab from URL params
+  /* ── Determine source context from URL ────────── */
   const hasWarehouseParam = !!warehouseItemsParam;
   const hasPRParam = !!prIdsParam;
-  const [activeTab, setActiveTab] = useState<'prs' | 'warehouse'>(
-    hasWarehouseParam && !hasPRParam ? 'warehouse' : 'prs'
-  );
 
-  // Default destination: if coming from warehouse, default to plant; otherwise LOC-001
-  const [destinationId, setDestinationId] = useState(
-    hasWarehouseParam ? 'LOC-001' : 'LOC-001'
-  );
+  /* ── Destination state ────────────────────────── */
+  const [destinationId, setDestinationId] = useState('LOC-001');
 
-  const [prSearch, setPrSearch] = useState('');
-  const [whSearch, setWhSearch] = useState('');
+  /* ── Picker modal ─────────────────────────────── */
+  const defaultPickerMode: PickerMode = hasWarehouseParam && !hasPRParam ? 'warehouse' : 'pr';
+  const [pickerMode, setPickerMode] = useState<PickerMode>(null);
+  const [pickerSearch, setPickerSearch] = useState('');
 
-  // ─── PR Tab State ───────────────────────────────
+  // Temp selections inside picker (committed on "Add Selected")
+  const [tempPRIds, setTempPRIds] = useState<Set<string>>(new Set());
+  const [tempWarehouseItems, setTempWarehouseItems] = useState<Record<string, number>>({});
+
+  /* ── PR State ─────────────────────────────────── */
   const selectedPRIdsFromUrl = useMemo(() => {
     if (!prIdsParam) return new Set<string>();
     return new Set(prIdsParam.split(',').filter(Boolean));
@@ -81,37 +136,13 @@ export function CreateLoad() {
     return allPRs.filter((pr) => pr.status === 'pending');
   }, [allPRs]);
 
-  const filteredPendingPRs = useMemo(() => {
-    if (!prSearch.trim()) return pendingPRs;
-    const q = prSearch.toLowerCase();
-    return pendingPRs.filter(
-      (pr) =>
-        pr.id.toLowerCase().includes(q) ||
-        pr.clientName.toLowerCase().includes(q) ||
-        pr.materials.some((m) => m.type.toLowerCase().includes(q))
-    );
-  }, [pendingPRs, prSearch]);
-
   const selectedPRs: PickupRequest[] = useMemo(() => {
     return Array.from(selectedPRIds)
       .map((id) => allPRs.find((pr) => pr.id === id))
       .filter((pr): pr is PickupRequest => pr !== undefined);
   }, [selectedPRIds, allPRs]);
 
-  const togglePR = useCallback((prId: string) => {
-    setSelectedPRIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(prId)) {
-        next.delete(prId);
-      } else {
-        next.add(prId);
-      }
-      return next;
-    });
-  }, []);
-
-  // ─── Warehouse Tab State ────────────────────────
-  // Calculate all warehouse source items (same logic as WarehouseDashboard)
+  /* ── Warehouse State ──────────────────────────── */
   const warehouseSourceItems = useMemo(() => {
     const now = new Date();
     const prWarehouseData: Record<
@@ -136,12 +167,12 @@ export function CreateLoad() {
       if (!load) return;
 
       if (load.destination.type === 'warehouse') {
-        const existing = prWarehouseData[stop.prId];
         const materials =
           stop.actualItems.length > 0
             ? stop.actualItems.map((i) => ({ type: i.material, qty: i.qty, unit: i.unit }))
             : stop.plannedItems.map((i) => ({ type: i.material, qty: i.qty, unit: i.unit }));
 
+        const existing = prWarehouseData[stop.prId];
         if (!existing) {
           prWarehouseData[stop.prId] = {
             qty: stop.totalActualQty,
@@ -181,10 +212,9 @@ export function CreateLoad() {
       const arrivedDate = whData.arrivedAt ? new Date(whData.arrivedAt) : now;
       const daysWaiting = Math.max(
         0,
-        Math.floor((now.getTime() - arrivedDate.getTime()) / (1000 * 60 * 60 * 24))
+        Math.floor((now.getTime() - arrivedDate.getTime()) / (1000 * 60 * 60 * 24)),
       );
 
-      // Deduplicate materials
       const materialMap = new Map<string, { type: string; qty: number; unit: string }>();
       whData.materials.forEach((m) => {
         const existing = materialMap.get(m.type);
@@ -210,23 +240,9 @@ export function CreateLoad() {
     return items;
   }, [allStops, allShipments, loads, allPRs]);
 
-  const filteredWarehouseItems = useMemo(() => {
-    if (!whSearch.trim()) return warehouseSourceItems;
-    const q = whSearch.toLowerCase();
-    return warehouseSourceItems.filter(
-      (item) =>
-        item.prId.toLowerCase().includes(q) ||
-        item.clientName.toLowerCase().includes(q) ||
-        item.warehouseName.toLowerCase().includes(q) ||
-        item.materials.some((m) => m.type.toLowerCase().includes(q))
-    );
-  }, [warehouseSourceItems, whSearch]);
-
-  // Selected warehouse items with qty override
   const [selectedWarehouseItems, setSelectedWarehouseItems] = useState<
     Record<string, number>
   >(() => {
-    // Parse from URL: warehouseItems=PRid:qty,PRid:qty
     if (!warehouseItemsParam) return {};
     const result: Record<string, number> = {};
     warehouseItemsParam.split(',').forEach((part) => {
@@ -238,47 +254,153 @@ export function CreateLoad() {
     return result;
   });
 
-  const toggleWarehouseItem = useCallback(
-    (prId: string, maxQty: number) => {
-      setSelectedWarehouseItems((prev) => {
-        const next = { ...prev };
-        if (prId in next) {
-          delete next[prId];
-        } else {
-          next[prId] = maxQty;
-        }
-        return next;
-      });
-    },
-    []
-  );
+  /* ── Filtered lists for picker ────────────────── */
+  const filteredPendingPRs = useMemo(() => {
+    const available = pendingPRs.filter((pr) => !selectedPRIds.has(pr.id));
+    if (!pickerSearch.trim()) return available;
+    const q = pickerSearch.toLowerCase();
+    return available.filter(
+      (pr) =>
+        pr.id.toLowerCase().includes(q) ||
+        pr.clientName.toLowerCase().includes(q) ||
+        pr.pickupLocation.city.toLowerCase().includes(q) ||
+        pr.pickupLocation.state.toLowerCase().includes(q) ||
+        pr.materials.some((m) => m.type.toLowerCase().includes(q)),
+    );
+  }, [pendingPRs, selectedPRIds, pickerSearch]);
 
-  const updateWarehouseQty = useCallback(
-    (prId: string, qty: number) => {
-      setSelectedWarehouseItems((prev) => ({ ...prev, [prId]: qty }));
-    },
-    []
-  );
+  const filteredWarehouseItems = useMemo(() => {
+    const available = warehouseSourceItems.filter(
+      (item) => !(item.prId in selectedWarehouseItems),
+    );
+    if (!pickerSearch.trim()) return available;
+    const q = pickerSearch.toLowerCase();
+    return available.filter(
+      (item) =>
+        item.prId.toLowerCase().includes(q) ||
+        item.clientName.toLowerCase().includes(q) ||
+        item.warehouseName.toLowerCase().includes(q) ||
+        item.materials.some((m) => m.type.toLowerCase().includes(q)),
+    );
+  }, [warehouseSourceItems, selectedWarehouseItems, pickerSearch]);
 
-  // ─── Combined Summary ───────────────────────────
+  /* ── Combined summary ─────────────────────────── */
   const prQty = selectedPRs.reduce(
     (sum, pr) => sum + pr.materials.reduce((s, m) => s + m.plannedQty, 0),
-    0
+    0,
   );
   const whQty = Object.values(selectedWarehouseItems).reduce(
     (sum, q) => sum + q,
-    0
+    0,
   );
   const totalQty = prQty + whQty;
   const totalSources =
     selectedPRIds.size + Object.keys(selectedWarehouseItems).length;
+  const hasAnySources = totalSources > 0;
+
+  const hasWarehouseSources = Object.keys(selectedWarehouseItems).length > 0;
+  const pattern: string = hasWarehouseSources
+    ? 'Warehouse Consolidation'
+    : totalSources === 1
+      ? 'Direct'
+      : totalSources > 1
+        ? 'Milk Run'
+        : '—';
 
   const destinationLoc = useMemo(
     () => locations.find((l) => l.id === destinationId),
-    [locations, destinationId]
+    [locations, destinationId],
   );
 
-  // ─── Create Load ────────────────────────────────
+  /* ── Picker actions ───────────────────────────── */
+  const openPicker = useCallback(
+    (mode: 'pr' | 'warehouse') => {
+      setPickerMode(mode);
+      setPickerSearch('');
+      setTempPRIds(new Set());
+      setTempWarehouseItems({});
+    },
+    [],
+  );
+
+  const openDefaultPicker = useCallback(() => {
+    openPicker(defaultPickerMode);
+  }, [defaultPickerMode, openPicker]);
+
+  const closePicker = useCallback(() => {
+    setPickerMode(null);
+    setPickerSearch('');
+    setTempPRIds(new Set());
+    setTempWarehouseItems({});
+  }, []);
+
+  const toggleTempPR = useCallback((prId: string) => {
+    setTempPRIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(prId)) next.delete(prId);
+      else next.add(prId);
+      return next;
+    });
+  }, []);
+
+  const toggleTempWarehouseItem = useCallback(
+    (prId: string, maxQty: number) => {
+      setTempWarehouseItems((prev) => {
+        const next = { ...prev };
+        if (prId in next) delete next[prId];
+        else next[prId] = maxQty;
+        return next;
+      });
+    },
+    [],
+  );
+
+  const updateTempWarehouseQty = useCallback(
+    (prId: string, qty: number) => {
+      setTempWarehouseItems((prev) => ({ ...prev, [prId]: qty }));
+    },
+    [],
+  );
+
+  const commitPickerSelection = useCallback(() => {
+    if (pickerMode === 'pr') {
+      setSelectedPRIds((prev) => {
+        const next = new Set(prev);
+        tempPRIds.forEach((id) => next.add(id));
+        return next;
+      });
+    } else if (pickerMode === 'warehouse') {
+      setSelectedWarehouseItems((prev) => ({
+        ...prev,
+        ...tempWarehouseItems,
+      }));
+    }
+    closePicker();
+  }, [pickerMode, tempPRIds, tempWarehouseItems, closePicker]);
+
+  const tempCount =
+    pickerMode === 'pr'
+      ? tempPRIds.size
+      : Object.keys(tempWarehouseItems).length;
+
+  /* ── Remove source ────────────────────────────── */
+  const removePR = useCallback((prId: string) => {
+    setSelectedPRIds((prev) => {
+      const next = new Set(prev);
+      next.delete(prId);
+      return next;
+    });
+  }, []);
+
+  const removeWarehouseItem = useCallback((prId: string) => {
+    setSelectedWarehouseItems((prev) => {
+      const next = { ...prev };
+      delete next[prId];
+      return next;
+    });
+  }, []);
+
+  /* ── Create Load (same logic, untouched) ──────── */
   const handleCreateLoad = useCallback(() => {
     if (totalSources === 0 || !destinationLoc) return;
 
@@ -300,7 +422,7 @@ export function CreateLoad() {
     const allPrIds: string[] = [];
     let seq = 1;
 
-    // Create PICKUP stops for PR sources (client locations)
+    // PICKUP stops for PR sources
     selectedPRs.forEach((pr) => {
       const pickupStopId = `STOP-${String(stops.length + seq).padStart(3, '0')}`;
       stopIdsForShipment.push(pickupStopId);
@@ -331,18 +453,15 @@ export function CreateLoad() {
       seq += 1;
     });
 
-    // Create PICKUP stops for warehouse sources (warehouse locations)
+    // PICKUP stops for warehouse sources
     Object.entries(selectedWarehouseItems).forEach(([prId, qty]) => {
       const whItem = warehouseSourceItems.find((i) => i.prId === prId);
       if (!whItem) return;
 
       const pickupStopId = `STOP-${String(stops.length + seq).padStart(3, '0')}`;
       stopIdsForShipment.push(pickupStopId);
-      if (!allPrIds.includes(prId)) {
-        allPrIds.push(prId);
-      }
+      if (!allPrIds.includes(prId)) allPrIds.push(prId);
 
-      // Proportionally allocate qty across materials
       const totalItemQty = whItem.materials.reduce((s, m) => s + m.qty, 0);
       const ratio = totalItemQty > 0 ? qty / totalItemQty : 1;
 
@@ -371,7 +490,7 @@ export function CreateLoad() {
       seq += 1;
     });
 
-    // Create DELIVER stop at destination with ALL materials combined
+    // DELIVER stop at destination
     const deliverStopId = `STOP-${String(stops.length + seq).padStart(3, '0')}`;
     stopIdsForShipment.push(deliverStopId);
 
@@ -381,7 +500,7 @@ export function CreateLoad() {
           material: m.type,
           qty: m.plannedQty,
           unit: m.unit,
-        }))
+        })),
       ),
       ...Object.entries(selectedWarehouseItems).flatMap(([prId, qty]) => {
         const whItem = warehouseSourceItems.find((i) => i.prId === prId);
@@ -416,12 +535,13 @@ export function CreateLoad() {
       status: 'pending',
     });
 
-    // Determine if any warehouse source needs parentShipmentId
-    const firstWhItem = Object.keys(selectedWarehouseItems).length > 0
-      ? warehouseSourceItems.find((i) => i.prId === Object.keys(selectedWarehouseItems)[0])
-      : null;
+    const firstWhItem =
+      Object.keys(selectedWarehouseItems).length > 0
+        ? warehouseSourceItems.find(
+            (i) => i.prId === Object.keys(selectedWarehouseItems)[0],
+          )
+        : null;
 
-    // Create shipment
     addShipment({
       id: shipId,
       loadId: loadId,
@@ -442,15 +562,10 @@ export function CreateLoad() {
       createdAt: new Date().toISOString(),
     });
 
-    // Determine pattern
-    const hasWarehouseSources = Object.keys(selectedWarehouseItems).length > 0;
-    let pattern: 'direct' | 'milk_run' | 'warehouse_consolidation' =
+    let patternLabel: 'direct' | 'milk_run' | 'warehouse_consolidation' =
       totalSources === 1 ? 'direct' : 'milk_run';
-    if (hasWarehouseSources) {
-      pattern = 'warehouse_consolidation';
-    }
+    if (hasWarehouseSources) patternLabel = 'warehouse_consolidation';
 
-    // Create load
     addLoad({
       id: loadId,
       prIds: allPrIds,
@@ -459,16 +574,14 @@ export function CreateLoad() {
       totalPlannedQty: totalQty,
       totalActualQty: 0,
       documents: [],
-      patternLabel: pattern,
+      patternLabel,
       status: 'draft',
       createdAt: new Date().toISOString(),
     });
 
-    // Update PRs
     allPrIds.forEach((prId) => {
       const pr = allPRs.find((p) => p.id === prId);
       if (!pr) return;
-      // Only change status for fresh PRs from tab 1
       const updates: Partial<PickupRequest> = {
         loadIds: [...(pr.loadIds || []), loadId],
       };
@@ -490,6 +603,7 @@ export function CreateLoad() {
     selectedWarehouseItems,
     warehouseSourceItems,
     selectedPRIds,
+    hasWarehouseSources,
     allPRs,
     addLoad,
     addShipment,
@@ -498,11 +612,13 @@ export function CreateLoad() {
     navigate,
   ]);
 
-  // ─── No sources state ──────────────────────────
-  const hasAnySources = totalSources > 0;
+  /* ──────────────────────────────────────────────── */
+  /*  RENDER                                          */
+  /* ──────────────────────────────────────────────── */
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* Header */}
       <PageHeader
         title="Create Load"
         breadcrumbs={[
@@ -516,409 +632,493 @@ export function CreateLoad() {
               onClick={handleCreateLoad}
               className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-primary-600 transition-colors"
             >
-              Create Load & Continue →
+              Create Load →
             </button>
           ) : undefined
         }
       />
 
-      {/* Summary (only if sources exist) */}
-      {hasAnySources && (
-        <div className="grid grid-cols-3 gap-4">
-          <div className="rounded-xl border border-gray-200 bg-card p-4 text-center">
-            <p className="text-sm text-text-muted">Sources</p>
-            <p className="text-2xl font-bold text-text-primary">{totalSources}</p>
-            <p className="text-xs text-text-muted mt-0.5">
-              {selectedPRIds.size > 0 && `${selectedPRIds.size} PR`}
-              {selectedPRIds.size > 0 && Object.keys(selectedWarehouseItems).length > 0 && ' + '}
-              {Object.keys(selectedWarehouseItems).length > 0 &&
-                `${Object.keys(selectedWarehouseItems).length} WH`}
-            </p>
-          </div>
-          <div className="rounded-xl border border-gray-200 bg-card p-4 text-center">
-            <p className="text-sm text-text-muted">Total Qty</p>
-            <p className="text-2xl font-bold text-text-primary">
-              {totalQty.toLocaleString()} Kg
-            </p>
-          </div>
-          <div className="rounded-xl border border-gray-200 bg-card p-4 text-center">
-            <p className="text-sm text-text-muted">Pattern</p>
-            <p className="text-2xl font-bold text-primary capitalize">
-              {Object.keys(selectedWarehouseItems).length > 0
-                ? 'WH Consolidation'
-                : totalSources === 1
-                ? 'Direct'
-                : 'Milk Run'}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Source Tabs */}
+      {/* ── Source Cards ──────────────────────────── */}
       <div className="rounded-xl border border-gray-200 bg-card">
-        {/* Tab Headers */}
-        <div className="flex border-b border-gray-200">
-          <button
-            onClick={() => setActiveTab('prs')}
-            className={`flex items-center gap-2 px-6 py-3 text-sm font-semibold transition-colors border-b-2 ${
-              activeTab === 'prs'
-                ? 'border-primary text-primary bg-primary-50/50'
-                : 'border-transparent text-text-muted hover:text-text-secondary'
-            }`}
-          >
-            <ClipboardList className="h-4 w-4" />
-            Pickup Requests
-            {selectedPRIds.size > 0 && (
-              <span className="rounded-full bg-primary-100 px-2 py-0.5 text-xs font-bold text-primary">
-                {selectedPRIds.size}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => setActiveTab('warehouse')}
-            className={`flex items-center gap-2 px-6 py-3 text-sm font-semibold transition-colors border-b-2 ${
-              activeTab === 'warehouse'
-                ? 'border-primary text-primary bg-primary-50/50'
-                : 'border-transparent text-text-muted hover:text-text-secondary'
-            }`}
-          >
-            <Warehouse className="h-4 w-4" />
-            Warehouse Material
-            {Object.keys(selectedWarehouseItems).length > 0 && (
-              <span className="rounded-full bg-warning-100 px-2 py-0.5 text-xs font-bold text-warning">
-                {Object.keys(selectedWarehouseItems).length}
-              </span>
-            )}
-          </button>
+        <div className="px-5 pt-4 pb-2 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wider">
+            Sources
+          </h3>
+          {hasAnySources && (
+            <span className="text-xs font-medium text-text-muted">
+              {totalSources} source{totalSources > 1 ? 's' : ''}
+            </span>
+          )}
         </div>
 
-        {/* Tab Content */}
-        <div className="p-5">
-          {/* ─── PR Tab ─────────────────────── */}
-          {activeTab === 'prs' && (
-            <div className="space-y-4">
-              <div className="relative max-w-md">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-                <input
-                  type="text"
-                  value={prSearch}
-                  onChange={(e) => setPrSearch(e.target.value)}
-                  placeholder="Search pending PRs..."
-                  className="w-full rounded-lg border border-gray-200 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-                />
-              </div>
+        <div className="px-5 pb-4 space-y-2">
+          {/* PR source cards */}
+          {selectedPRs.map((pr) => {
+            const qty = pr.materials.reduce((s, m) => s + m.plannedQty, 0);
+            const matSummary = pr.materials
+              .map((m) => `${m.type} (${m.plannedQty.toLocaleString()} ${m.unit})`)
+              .join(' · ');
 
-              {filteredPendingPRs.length > 0 ? (
-                <div className="space-y-2">
-                  {filteredPendingPRs.map((pr) => {
-                    const prQtyVal = pr.materials.reduce((s, m) => s + m.plannedQty, 0);
-                    const isSelected = selectedPRIds.has(pr.id);
-                    return (
-                      <div
-                        key={pr.id}
-                        onClick={() => togglePR(pr.id)}
-                        className={`cursor-pointer rounded-lg border p-4 transition-colors ${
-                          isSelected
-                            ? 'border-primary bg-primary-50/50'
-                            : 'border-gray-200 bg-white hover:bg-gray-50'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-start gap-3">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              readOnly
-                              className="mt-1 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-                            />
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <span className="font-semibold text-primary">
-                                  {pr.id}
-                                </span>
-                                <span className="text-sm text-text-muted">
-                                  ({pr.sourceRequestId})
-                                </span>
-                              </div>
-                              <p className="text-sm font-medium text-text-primary">
-                                {pr.clientName}
-                              </p>
-                              <div className="flex items-center gap-1 text-sm text-text-muted">
-                                <MapPin className="h-3.5 w-3.5" />
-                                {pr.pickupLocation.city},{' '}
-                                {pr.pickupLocation.state}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-lg font-bold text-text-primary">
-                              {prQtyVal.toLocaleString()} Kg
-                            </p>
-                            <div className="flex flex-wrap justify-end gap-1 mt-1">
-                              {pr.materials.map((m, i) => (
-                                <span
-                                  key={i}
-                                  className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-text-secondary"
-                                >
-                                  <Package className="inline h-3 w-3 mr-0.5" />
-                                  {m.type} ({m.plannedQty} {m.unit})
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+            return (
+              <div
+                key={pr.id}
+                className="group flex items-start gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3 transition-colors hover:border-gray-300"
+              >
+                <span className="mt-0.5 text-base shrink-0">📋</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Link
+                      to={`/pickup-requests/${pr.id}`}
+                      className="text-sm font-semibold text-primary hover:underline"
+                    >
+                      {pr.id}
+                    </Link>
+                    <span className="text-sm text-text-primary font-medium">
+                      · {pr.clientName}
+                    </span>
+                    <span className="text-sm text-text-muted">
+                      · {pr.pickupLocation.city}, {pr.pickupLocation.state}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-text-muted truncate">
+                    {matSummary}{' '}
+                    <span className="font-semibold text-text-secondary">
+                      — {qty.toLocaleString()} Kg total
+                    </span>
+                  </p>
                 </div>
-              ) : (
-                <EmptyState
-                  title="No Pending PRs"
-                  description="All pickup requests have been planned or completed."
-                  icon={ClipboardList}
-                />
-              )}
+                <button
+                  onClick={() => removePR(pr.id)}
+                  className="shrink-0 rounded p-1 text-text-muted opacity-60 hover:opacity-100 hover:text-danger hover:bg-danger-50 transition-all"
+                  title="Remove"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            );
+          })}
+
+          {/* Warehouse source cards */}
+          {Object.entries(selectedWarehouseItems).map(([prId, qty]) => {
+            const whItem = warehouseSourceItems.find((i) => i.prId === prId);
+            if (!whItem) return null;
+            const matSummary = whItem.materials
+              .map((m) => `${m.type} (${m.qty.toLocaleString()} ${m.unit})`)
+              .join(' · ');
+
+            return (
+              <div
+                key={`wh-${prId}`}
+                className="group flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50/40 px-4 py-3 transition-colors hover:border-amber-300"
+              >
+                <span className="mt-0.5 text-base shrink-0">🏭</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Link
+                      to={`/pickup-requests/${prId}`}
+                      className="text-sm font-semibold text-primary hover:underline"
+                    >
+                      {prId}
+                    </Link>
+                    <span className="text-sm text-text-primary font-medium">
+                      · {whItem.clientName}
+                    </span>
+                    <span className="text-sm text-text-muted">
+                      · from {whItem.warehouseName}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-text-muted truncate">
+                    {matSummary}{' '}
+                    <span className="font-semibold text-text-secondary">
+                      — {qty.toLocaleString()} Kg
+                    </span>
+                    <span className="ml-1 text-amber-600">
+                      ({whItem.daysWaiting} day{whItem.daysWaiting !== 1 ? 's' : ''} at WH)
+                    </span>
+                  </p>
+                </div>
+                <button
+                  onClick={() => removeWarehouseItem(prId)}
+                  className="shrink-0 rounded p-1 text-text-muted opacity-60 hover:opacity-100 hover:text-danger hover:bg-danger-50 transition-all"
+                  title="Remove"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            );
+          })}
+
+          {/* Empty state */}
+          {!hasAnySources && (
+            <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-200 py-10 text-center">
+              <Boxes className="h-10 w-10 text-gray-300 mb-3" />
+              <p className="text-sm font-medium text-text-secondary">
+                No sources selected yet
+              </p>
+              <p className="text-xs text-text-muted mt-1 mb-4 max-w-xs">
+                Add pickup requests or warehouse material to create a load
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => openPicker('pr')}
+                  className="flex items-center gap-1.5 rounded-lg border border-primary bg-primary-50 px-4 py-2 text-sm font-medium text-primary hover:bg-primary-100 transition-colors"
+                >
+                  <ClipboardList className="h-4 w-4" />
+                  Add from Pickup Requests
+                </button>
+                <button
+                  onClick={() => openPicker('warehouse')}
+                  className="flex items-center gap-1.5 rounded-lg border border-amber-400 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100 transition-colors"
+                >
+                  <Warehouse className="h-4 w-4" />
+                  Add from Warehouse
+                </button>
+              </div>
             </div>
           )}
 
-          {/* ─── Warehouse Tab ──────────────── */}
-          {activeTab === 'warehouse' && (
-            <div className="space-y-4">
-              <div className="relative max-w-md">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-                <input
-                  type="text"
-                  value={whSearch}
-                  onChange={(e) => setWhSearch(e.target.value)}
-                  placeholder="Search warehouse material..."
-                  className="w-full rounded-lg border border-gray-200 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-                />
-              </div>
-
-              {filteredWarehouseItems.length > 0 ? (
-                <div className="space-y-2">
-                  {filteredWarehouseItems.map((item) => {
-                    const isSelected = item.prId in selectedWarehouseItems;
-                    const selectedQty = selectedWarehouseItems[item.prId] ?? item.maxQty;
-                    return (
-                      <div
-                        key={item.prId}
-                        className={`rounded-lg border p-4 transition-colors ${
-                          isSelected
-                            ? 'border-warning bg-warning-50/30'
-                            : 'border-gray-200 bg-white hover:bg-gray-50'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-start gap-3">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => toggleWarehouseItem(item.prId, item.maxQty)}
-                              className="mt-1 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
-                            />
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <span className="font-semibold text-primary">
-                                  {item.prId}
-                                </span>
-                                <span className="rounded-full bg-warning-100 px-2 py-0.5 text-[10px] font-bold text-warning">
-                                  🏭 WAREHOUSE
-                                </span>
-                              </div>
-                              <p className="text-sm font-medium text-text-primary">
-                                {item.clientName}
-                              </p>
-                              <div className="flex items-center gap-1 text-sm text-text-muted">
-                                <Warehouse className="h-3.5 w-3.5" />
-                                {item.warehouseName}
-                              </div>
-                              <p className="text-xs text-text-muted">
-                                {item.daysWaiting} days at warehouse
-                              </p>
-                            </div>
-                          </div>
-                          <div className="text-right space-y-2">
-                            <div className="flex flex-wrap justify-end gap-1">
-                              {item.materials.map((m, i) => (
-                                <span
-                                  key={i}
-                                  className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-text-secondary"
-                                >
-                                  {m.type} ({m.qty.toLocaleString()} {m.unit})
-                                </span>
-                              ))}
-                            </div>
-                            {isSelected && (
-                              <div className="flex items-center justify-end gap-2">
-                                <label className="text-xs text-text-muted">
-                                  Qty:
-                                </label>
-                                <input
-                                  type="number"
-                                  value={selectedQty}
-                                  min={1}
-                                  max={item.maxQty}
-                                  onChange={(e) =>
-                                    updateWarehouseQty(
-                                      item.prId,
-                                      Math.min(
-                                        item.maxQty,
-                                        Math.max(1, Number(e.target.value) || 0)
-                                      )
-                                    )
-                                  }
-                                  className="w-24 rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-right outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-                                />
-                                <span className="text-xs text-text-muted">
-                                  / {item.maxQty.toLocaleString()} Kg
-                                </span>
-                              </div>
-                            )}
-                            {!isSelected && (
-                              <p className="text-lg font-bold text-text-primary">
-                                {item.maxQty.toLocaleString()} Kg
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <EmptyState
-                  title="No Material at Warehouses"
-                  description="No completed warehouse deliveries found. Material appears here after being delivered to a warehouse."
-                  icon={Warehouse}
-                />
-              )}
-            </div>
+          {/* Add more button */}
+          {hasAnySources && (
+            <button
+              onClick={openDefaultPicker}
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-300 py-2.5 text-sm font-medium text-text-muted hover:text-primary hover:border-primary hover:bg-primary-50/50 transition-colors"
+            >
+              <Plus className="h-4 w-4" />
+              Add more
+            </button>
           )}
         </div>
       </div>
 
-      {/* Selected Sources Panel (shows all selections from both tabs) */}
+      {/* ── Destination + Summary row ─────────────── */}
       {hasAnySources && (
-        <div className="rounded-xl border border-gray-200 bg-card p-5 space-y-3">
-          <h3 className="text-base font-semibold text-text-primary">
-            Selected Sources ({totalSources})
-          </h3>
-          <div className="space-y-2">
-            {selectedPRs.map((pr) => {
-              const prQtyVal = pr.materials.reduce((s, m) => s + m.plannedQty, 0);
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Destination */}
+          <div className="rounded-xl border border-gray-200 bg-card px-5 py-4">
+            <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 block">
+              Destination
+            </label>
+            <select
+              value={destinationId}
+              onChange={(e) => setDestinationId(e.target.value)}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary bg-white"
+            >
+              {plantAndWarehouseLocations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.type === 'warehouse' ? '🏭' : '🏢'} {l.name} — {l.city},{' '}
+                  {l.state}
+                </option>
+              ))}
+            </select>
+            {destinationLoc && (
+              <p className="mt-1.5 text-xs text-text-muted truncate">
+                {destinationLoc.address}
+              </p>
+            )}
+          </div>
+
+          {/* Summary */}
+          <div className="rounded-xl border border-gray-200 bg-card px-5 py-4 flex items-center justify-between">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                Summary
+              </p>
+              <div className="flex items-center gap-4 text-sm">
+                <span className="text-text-muted">
+                  Pattern:{' '}
+                  <span className="font-semibold text-primary">{pattern}</span>
+                </span>
+                <span className="text-text-muted">|</span>
+                <span className="text-text-muted">
+                  Total:{' '}
+                  <span className="font-bold text-text-primary text-base">
+                    {totalQty.toLocaleString()} Kg
+                  </span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Create button (bottom) ────────────────── */}
+      {hasAnySources && (
+        <div className="flex justify-end pt-1">
+          <button
+            onClick={handleCreateLoad}
+            className="flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-semibold text-white shadow-md hover:bg-primary-600 hover:shadow-lg transition-all"
+          >
+            Create Load & Continue
+            <ArrowRight className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════════════
+       *  PICKER MODALS
+       * ════════════════════════════════════════════════ */}
+
+      {/* ── PR Picker ─────────────────────────────── */}
+      <ModalOverlay open={pickerMode === 'pr'} onClose={closePicker}>
+        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+          <h2 className="text-base font-bold text-text-primary">
+            Select Pickup Requests
+          </h2>
+          <button
+            onClick={closePicker}
+            className="rounded-lg p-1 text-text-muted hover:bg-gray-100 hover:text-text-primary transition-colors"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="px-5 pt-4 pb-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+            <input
+              type="text"
+              value={pickerSearch}
+              onChange={(e) => setPickerSearch(e.target.value)}
+              placeholder="Search by PR ID, client, location..."
+              className="w-full rounded-lg border border-gray-200 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              autoFocus
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-2 space-y-2">
+          {filteredPendingPRs.length > 0 ? (
+            filteredPendingPRs.map((pr) => {
+              const qty = pr.materials.reduce((s, m) => s + m.plannedQty, 0);
+              const isChecked = tempPRIds.has(pr.id);
               return (
                 <div
                   key={pr.id}
-                  className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-2.5"
+                  onClick={() => toggleTempPR(pr.id)}
+                  className={`cursor-pointer rounded-lg border p-3 transition-colors ${
+                    isChecked
+                      ? 'border-primary bg-primary-50/50'
+                      : 'border-gray-200 bg-white hover:bg-gray-50'
+                  }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <span className="text-lg">📋</span>
-                    <div>
-                      <Link
-                        to={`/pickup-requests/${pr.id}`}
-                        className="text-sm font-medium text-primary hover:underline"
-                      >
-                        {pr.id}
-                      </Link>
-                      <span className="text-xs text-text-muted ml-2">
-                        {pr.clientName} · {pr.pickupLocation.city}
-                      </span>
+                  <div className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      readOnly
+                      className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-primary text-sm">
+                          {pr.id}
+                        </span>
+                        <span className="text-sm text-text-primary">
+                          {pr.clientName}
+                        </span>
+                        <span className="text-xs text-text-muted">
+                          · {pr.materials.map((m) => m.type).join(', ')}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 mt-0.5 text-xs text-text-muted">
+                        <MapPin className="h-3 w-3" />
+                        {pr.pickupLocation.city}, {pr.pickupLocation.state}
+                        <span className="ml-auto font-bold text-text-primary text-sm">
+                          {qty.toLocaleString()} Kg
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm font-semibold text-text-primary">
-                      {prQtyVal.toLocaleString()} Kg
-                    </span>
-                    <button
-                      onClick={() => togglePR(pr.id)}
-                      className="rounded p-1 text-text-muted hover:text-danger hover:bg-danger-50 transition-colors"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
                   </div>
                 </div>
               );
-            })}
-            {Object.entries(selectedWarehouseItems).map(([prId, qty]) => {
-              const whItem = warehouseSourceItems.find((i) => i.prId === prId);
-              return (
-                <div
-                  key={`wh-${prId}`}
-                  className="flex items-center justify-between rounded-lg border border-warning-200 bg-warning-50/30 px-4 py-2.5"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-lg">🏭</span>
-                    <div>
-                      <Link
-                        to={`/pickup-requests/${prId}`}
-                        className="text-sm font-medium text-primary hover:underline"
-                      >
-                        {prId}
-                      </Link>
-                      <span className="text-xs text-text-muted ml-2">
-                        {whItem?.clientName} · {whItem?.warehouseName}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm font-semibold text-text-primary">
-                      {qty.toLocaleString()} Kg
-                    </span>
-                    <button
-                      onClick={() => toggleWarehouseItem(prId, whItem?.maxQty ?? qty)}
-                      className="rounded p-1 text-text-muted hover:text-danger hover:bg-danger-50 transition-colors"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+            })
+          ) : (
+            <div className="py-8 text-center text-sm text-text-muted">
+              No pending pickup requests available
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="border-t border-gray-200 px-5 py-3">
+          <button
+            onClick={() => {
+              setPickerMode('warehouse');
+              setPickerSearch('');
+              setTempPRIds(new Set());
+              setTempWarehouseItems({});
+            }}
+            className="mb-3 flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"
+          >
+            Or add from warehouse
+            <ArrowRight className="h-3 w-3" />
+          </button>
+          <div className="flex items-center justify-between">
+            <button
+              onClick={closePicker}
+              className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-text-secondary hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={commitPickerSelection}
+              disabled={tempPRIds.size === 0}
+              className="rounded-lg bg-primary px-5 py-2 text-sm font-semibold text-white hover:bg-primary-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Add Selected ({tempPRIds.size}) →
+            </button>
           </div>
         </div>
-      )}
+      </ModalOverlay>
 
-      {/* Destination Picker */}
-      <div className="rounded-xl border border-gray-200 bg-card p-5 space-y-3">
-        <h3 className="text-base font-semibold text-text-primary">Destination</h3>
-        <select
-          value={destinationId}
-          onChange={(e) => setDestinationId(e.target.value)}
-          className="w-full max-w-md rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-        >
-          {plantAndWarehouseLocations.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.type === 'warehouse' ? '🏭 ' : '🏢 '}
-              {l.name} ({l.type}) — {l.city}, {l.state}
-            </option>
-          ))}
-        </select>
-        {destinationLoc && (
-          <p className="text-sm text-text-muted">{destinationLoc.address}</p>
-        )}
-      </div>
-
-      {/* Create button (bottom) */}
-      {hasAnySources && (
-        <div className="flex justify-end">
+      {/* ── Warehouse Picker ──────────────────────── */}
+      <ModalOverlay open={pickerMode === 'warehouse'} onClose={closePicker}>
+        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+          <h2 className="text-base font-bold text-text-primary">
+            Select Warehouse Material
+          </h2>
           <button
-            onClick={handleCreateLoad}
-            className="rounded-lg bg-primary px-6 py-3 text-sm font-medium text-white shadow-sm hover:bg-primary-600 transition-colors"
+            onClick={closePicker}
+            className="rounded-lg p-1 text-text-muted hover:bg-gray-100 hover:text-text-primary transition-colors"
           >
-            Create Load & Continue →
+            <X className="h-5 w-5" />
           </button>
         </div>
-      )}
 
-      {/* Empty state when nothing selected */}
-      {!hasAnySources && (
-        <EmptyState
-          title="Select Sources to Create a Load"
-          description="Use the tabs above to select Pickup Requests or Warehouse Material, then choose a destination."
-          icon={Boxes}
-        />
-      )}
+        <div className="px-5 pt-4 pb-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+            <input
+              type="text"
+              value={pickerSearch}
+              onChange={(e) => setPickerSearch(e.target.value)}
+              placeholder="Search by PR, client, warehouse..."
+              className="w-full rounded-lg border border-gray-200 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              autoFocus
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-2 space-y-2">
+          {filteredWarehouseItems.length > 0 ? (
+            filteredWarehouseItems.map((item) => {
+              const isChecked = item.prId in tempWarehouseItems;
+              const selectedQty = tempWarehouseItems[item.prId] ?? item.maxQty;
+              return (
+                <div
+                  key={item.prId}
+                  className={`rounded-lg border p-3 transition-colors ${
+                    isChecked
+                      ? 'border-amber-400 bg-amber-50/40'
+                      : 'border-gray-200 bg-white hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() =>
+                        toggleTempWarehouseItem(item.prId, item.maxQty)
+                      }
+                      className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                    />
+                    <div
+                      className="flex-1 min-w-0 cursor-pointer"
+                      onClick={() =>
+                        toggleTempWarehouseItem(item.prId, item.maxQty)
+                      }
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-primary text-sm">
+                          {item.prId}
+                        </span>
+                        <span className="text-sm text-text-primary">
+                          {item.clientName}
+                        </span>
+                        <span className="text-xs text-text-muted">
+                          · {item.materials.map((m) => m.type).join(', ')}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5 text-xs text-text-muted">
+                        <Warehouse className="h-3 w-3" />
+                        {item.warehouseName}
+                        <span>·</span>
+                        <span className="font-bold text-text-primary text-sm">
+                          {item.maxQty.toLocaleString()} Kg
+                        </span>
+                        <span>·</span>
+                        <span className="text-amber-600">
+                          {item.daysWaiting} day{item.daysWaiting !== 1 ? 's' : ''}
+                        </span>
+                      </div>
+                    </div>
+                    {/* Qty input — only when checked */}
+                    {isChecked && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <input
+                          type="number"
+                          value={selectedQty}
+                          min={1}
+                          max={item.maxQty}
+                          onChange={(e) =>
+                            updateTempWarehouseQty(
+                              item.prId,
+                              Math.min(
+                                item.maxQty,
+                                Math.max(1, Number(e.target.value) || 0),
+                              ),
+                            )
+                          }
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-20 rounded border border-gray-200 px-2 py-1 text-xs text-right outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                        />
+                        <span className="text-[10px] text-text-muted whitespace-nowrap">
+                          / {item.maxQty.toLocaleString()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="py-8 text-center text-sm text-text-muted">
+              No warehouse material available
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="border-t border-gray-200 px-5 py-3">
+          <button
+            onClick={() => {
+              setPickerMode('pr');
+              setPickerSearch('');
+              setTempPRIds(new Set());
+              setTempWarehouseItems({});
+            }}
+            className="mb-3 flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"
+          >
+            Or add from pickup requests
+            <ArrowRight className="h-3 w-3" />
+          </button>
+          <div className="flex items-center justify-between">
+            <button
+              onClick={closePicker}
+              className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-text-secondary hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={commitPickerSelection}
+              disabled={Object.keys(tempWarehouseItems).length === 0}
+              className="rounded-lg bg-primary px-5 py-2 text-sm font-semibold text-white hover:bg-primary-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Add Selected ({Object.keys(tempWarehouseItems).length}) →
+            </button>
+          </div>
+        </div>
+      </ModalOverlay>
     </div>
   );
 }
