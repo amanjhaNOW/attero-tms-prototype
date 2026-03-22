@@ -293,8 +293,9 @@ export function cancelShipment(shipmentId: string) {
 }
 
 /**
- * Add a new shipment to an existing load.
- * Clones ALL stops from the first shipment (preserving the full route for milk runs).
+ * Add a new shipment to an existing load ("Same Route").
+ * Clones PICKUP + DELIVER stops from the first shipment.
+ * TRANSFER_OUT / TRANSFER_IN stops are NOT cloned (they are cross-dock specific).
  */
 export function addShipmentToLoad(loadId: string) {
   const loadStore = useLoadStore.getState();
@@ -322,9 +323,15 @@ export function addShipmentToLoad(loadId: string) {
   const newStopIds: string[] = [];
   let stopCounter = stopStore.stops.length + 1;
 
-  if (firstShipStops.length > 0) {
-    // Clone ALL stops from the first shipment with new IDs
-    firstShipStops.forEach((srcStop) => {
+  // Filter: only clone PICKUP + DELIVER stops (not TRANSFER_OUT / TRANSFER_IN)
+  const stopsToClone = firstShipStops.filter(
+    (s) => s.type === 'PICKUP' || s.type === 'DELIVER',
+  );
+
+  if (stopsToClone.length > 0) {
+    // Clone PICKUP + DELIVER stops with new IDs and re-sequence
+    let seq = 1;
+    stopsToClone.forEach((srcStop) => {
       const newStopId = `STOP-${String(stopCounter).padStart(3, '0')}`;
       stopCounter += 1;
       newStopIds.push(newStopId);
@@ -332,7 +339,7 @@ export function addShipmentToLoad(loadId: string) {
       stopStore.addStop({
         id: newStopId,
         shipmentId: shipId,
-        sequence: srcStop.sequence,
+        sequence: seq,
         type: srcStop.type,
         location: { ...srcStop.location },
         prId: srcStop.prId,
@@ -343,6 +350,7 @@ export function addShipmentToLoad(loadId: string) {
         // Link DELIVER to its first pickup
         linkedStopId: srcStop.type === 'DELIVER' ? newStopIds[0] : undefined,
       });
+      seq += 1;
     });
   } else {
     // Fallback: create stops from PRs if no existing shipment
@@ -629,4 +637,162 @@ export function addStopToShipment(
       stopIds: [...linkedShipment.stopIds, pairedStopId],
     });
   }
+}
+
+/**
+ * Add a Line-Haul shipment to a load.
+ * Creates a shipment with ONLY a DELIVER stop at the load's destination.
+ * No pickups — user connects feeders to it via Ship→Ship connections.
+ */
+export function addLineHaulToLoad(loadId: string) {
+  const loadStore = useLoadStore.getState();
+  const shipmentStore = useShipmentStore.getState();
+  const stopStore = useStopStore.getState();
+  const prStore = usePRStore.getState();
+
+  const load = loadStore.getLoadById(loadId);
+  if (!load) return;
+
+  // Generate IDs
+  const shipNum = shipmentStore.shipments.length + 1;
+  const shipId = `SHP-${String(shipNum).padStart(3, '0')}`;
+  const stopCounter = stopStore.stops.length + 1;
+  const deliverStopId = `STOP-${String(stopCounter).padStart(3, '0')}`;
+
+  // Aggregate planned items from all PRs in the load (for the DELIVER stop)
+  const allPlannedItems = load.prIds
+    .map((prId) => prStore.getPRById(prId))
+    .filter((pr): pr is NonNullable<typeof pr> => pr !== undefined)
+    .flatMap((pr) =>
+      pr.materials.map((m) => ({
+        material: m.type,
+        qty: m.plannedQty,
+        unit: m.unit,
+      })),
+    );
+
+  // Create DELIVER stop at load destination
+  stopStore.addStop({
+    id: deliverStopId,
+    shipmentId: shipId,
+    sequence: 1,
+    type: 'DELIVER',
+    location: { ...load.destination },
+    prId: load.prIds.length === 1 ? load.prIds[0] : '',
+    plannedItems: allPlannedItems,
+    actualItems: [],
+    totalActualQty: 0,
+    status: 'pending',
+  });
+
+  // Create shipment
+  const firstPR = prStore.getPRById(load.prIds[0]);
+  shipmentStore.addShipment({
+    id: shipId,
+    loadId,
+    scheduledPickupDate:
+      firstPR?.tentativePickupDate ?? new Date().toISOString().split('T')[0],
+    transportMode: 'carrier_third_party',
+    transporterName: '',
+    transporterGst: '',
+    vehicleType: '',
+    vehicleRegistration: '',
+    driverName: '',
+    driverPhone: '',
+    stopIds: [deliverStopId],
+    shipmentValue: 0,
+    status: 'draft',
+    createdAt: new Date().toISOString(),
+  });
+
+  // Update load
+  loadStore.updateLoad(loadId, {
+    shipmentIds: [...load.shipmentIds, shipId],
+    // If load was fully_planned, adding a draft shipment makes it partially_planned
+    status: load.status === 'fully_planned' ? 'partially_planned' : load.status,
+  });
+}
+
+/**
+ * Add an Empty shipment to a load.
+ * Creates a shipment with NO stops at all.
+ * User builds the entire route via click-to-connect in the flow diagram.
+ */
+export function addEmptyShipmentToLoad(loadId: string) {
+  const loadStore = useLoadStore.getState();
+  const shipmentStore = useShipmentStore.getState();
+  const prStore = usePRStore.getState();
+
+  const load = loadStore.getLoadById(loadId);
+  if (!load) return;
+
+  // Generate ID
+  const shipNum = shipmentStore.shipments.length + 1;
+  const shipId = `SHP-${String(shipNum).padStart(3, '0')}`;
+
+  const firstPR = prStore.getPRById(load.prIds[0]);
+  shipmentStore.addShipment({
+    id: shipId,
+    loadId,
+    scheduledPickupDate:
+      firstPR?.tentativePickupDate ?? new Date().toISOString().split('T')[0],
+    transportMode: 'carrier_third_party',
+    transporterName: '',
+    transporterGst: '',
+    vehicleType: '',
+    vehicleRegistration: '',
+    driverName: '',
+    driverPhone: '',
+    stopIds: [],
+    shipmentValue: 0,
+    status: 'draft',
+    createdAt: new Date().toISOString(),
+  });
+
+  // Update load
+  loadStore.updateLoad(loadId, {
+    shipmentIds: [...load.shipmentIds, shipId],
+    status: load.status === 'fully_planned' ? 'partially_planned' : load.status,
+  });
+}
+
+/**
+ * Auto-remove a feeder's DELIVER stop when a handover (TRANSFER_OUT) is created.
+ *
+ * Conditions for removal:
+ * - Source shipment is in 'draft' status
+ * - The DELIVER stop is the LAST stop on the shipment
+ * - The feeder doesn't have other TRANSFER_OUT connections (first handover only)
+ *
+ * This transforms: PICKUP → DELIVER into: PICKUP → HANDOVER
+ */
+export function autoRemoveFeederDeliver(sourceShipmentId: string) {
+  const stopStore = useStopStore.getState();
+  const shipmentStore = useShipmentStore.getState();
+
+  const shipment = shipmentStore.getShipmentById(sourceShipmentId);
+  if (!shipment || shipment.status !== 'draft') return;
+
+  const shipStops = stopStore.stops
+    .filter((s) => s.shipmentId === sourceShipmentId)
+    .sort((a, b) => a.sequence - b.sequence);
+
+  const deliverStop = shipStops.find((s) => s.type === 'DELIVER');
+  if (!deliverStop) return;
+
+  // Only auto-remove if DELIVER is the last stop (ignoring the just-added TRANSFER_OUT)
+  // After adding TRANSFER_OUT before DELIVER, DELIVER may have been bumped.
+  // We check: is DELIVER still at the end? (highest sequence)
+  const maxSeq = Math.max(...shipStops.map((s) => s.sequence));
+  if (deliverStop.sequence !== maxSeq) return;
+
+  // Count TRANSFER_OUT stops on this shipment (the one just created is already there)
+  const transferOutCount = shipStops.filter((s) => s.type === 'TRANSFER_OUT').length;
+
+  // Only auto-remove on the FIRST handover connection
+  // (if there's more than 1 TRANSFER_OUT, the user is doing something complex — don't touch DELIVER)
+  if (transferOutCount > 1) return;
+
+  // Remove the DELIVER stop
+  removeStopFromShipment(deliverStop.id);
 }

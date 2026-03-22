@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   FileText,
@@ -19,6 +19,8 @@ import {
   useReferenceStore,
   planShipment,
   addShipmentToLoad,
+  addLineHaulToLoad,
+  addEmptyShipmentToLoad,
 } from '@/stores';
 import { addPRsToLoad, removePRFromLoad, changeLoadDestination } from '@/lib/createLoadHelper';
 import type { Shipment } from '@/types';
@@ -49,6 +51,22 @@ export function LoadWorkspace() {
   // Picker modals
   const [prPickerOpen, setPRPickerOpen] = useState(false);
   const [whPickerOpen, setWHPickerOpen] = useState(false);
+
+  // Add Truck dropdown menu
+  const [showAddTruckMenu, setShowAddTruckMenu] = useState(false);
+  const addTruckMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!showAddTruckMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (addTruckMenuRef.current && !addTruckMenuRef.current.contains(e.target as Node)) {
+        setShowAddTruckMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showAddTruckMenu]);
 
   // Shipment expand panel (accordion — one at a time)
   const [expandedShipmentId, setExpandedShipmentId] = useState<string | null>(null);
@@ -303,13 +321,70 @@ export function LoadWorkspace() {
             Add from Warehouse
           </button>
           {canAddShipment && load.prIds.length > 0 && (
-            <button
-              onClick={handleAddShipment}
-              className="flex items-center gap-1.5 rounded-lg border border-dashed border-primary-300 px-3 py-2 text-xs font-medium text-text-muted hover:text-primary hover:border-primary hover:bg-primary-50/50 transition-colors"
-            >
-              <Truck className="h-3.5 w-3.5" />
-              Add Shipment
-            </button>
+            <div className="relative" ref={addTruckMenuRef}>
+              <button
+                onClick={() => setShowAddTruckMenu((prev) => !prev)}
+                className="flex items-center gap-1.5 rounded-lg border border-dashed border-primary-300 px-3 py-2 text-xs font-medium text-text-muted hover:text-primary hover:border-primary hover:bg-primary-50/50 transition-colors"
+              >
+                <Truck className="h-3.5 w-3.5" />
+                Add Truck ▾
+              </button>
+              {showAddTruckMenu && (
+                <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg p-1.5 z-30 w-72 animate-in slide-in-from-top-1">
+                  <button
+                    onClick={() => {
+                      handleAddShipment();
+                      setShowAddTruckMenu(false);
+                    }}
+                    className="flex items-center gap-2.5 w-full rounded-lg px-3 py-2.5 text-left text-xs hover:bg-primary-50 transition-colors group"
+                  >
+                    <span className="text-base">🚛</span>
+                    <div>
+                      <span className="font-semibold text-text-primary group-hover:text-primary">
+                        Same Route
+                      </span>
+                      <p className="text-[10px] text-text-muted mt-0.5">
+                        Clone current pickups — another truck, same route
+                      </p>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (id) addLineHaulToLoad(id);
+                      setShowAddTruckMenu(false);
+                    }}
+                    className="flex items-center gap-2.5 w-full rounded-lg px-3 py-2.5 text-left text-xs hover:bg-blue-50 transition-colors group"
+                  >
+                    <span className="text-base">📥</span>
+                    <div>
+                      <span className="font-semibold text-text-primary group-hover:text-blue-700">
+                        Line-Haul
+                      </span>
+                      <p className="text-[10px] text-text-muted mt-0.5">
+                        Deliver only — for cross-dock, connect feeders to it
+                      </p>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (id) addEmptyShipmentToLoad(id);
+                      setShowAddTruckMenu(false);
+                    }}
+                    className="flex items-center gap-2.5 w-full rounded-lg px-3 py-2.5 text-left text-xs hover:bg-gray-50 transition-colors group"
+                  >
+                    <span className="text-base">📦</span>
+                    <div>
+                      <span className="font-semibold text-text-primary group-hover:text-text-primary">
+                        Empty Truck
+                      </span>
+                      <p className="text-[10px] text-text-muted mt-0.5">
+                        No stops — build route manually using connections
+                      </p>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}

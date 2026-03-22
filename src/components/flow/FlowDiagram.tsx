@@ -11,7 +11,7 @@ import { computeFlowLayout } from './FlowLayout';
 import type { FlowNodeData } from './FlowLayout';
 import { FlowNode } from './FlowNode';
 import { FlowEdge } from './FlowEdge';
-import { addStopToShipment, removeStopFromShipment } from '@/stores';
+import { addStopToShipment, removeStopFromShipment, autoRemoveFeederDeliver } from '@/stores';
 
 interface FlowDiagramProps {
   load: Load;
@@ -273,6 +273,9 @@ export function FlowDiagram({
             undefined,
             targetShipmentId,
           );
+
+          // Auto-remove feeder's DELIVER stop (the feeder is now handing over, not delivering directly)
+          autoRemoveFeederDeliver(sourceShipmentId);
         }
       }
 
