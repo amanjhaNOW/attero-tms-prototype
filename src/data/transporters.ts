@@ -60,4 +60,32 @@ export const mockVehicles: Vehicle[] = [
     capacityKg: 3000,
     transporterId: 'TRN-002',
   },
+  {
+    id: 'VEH-006',
+    registration: 'MH12AB3456',
+    type: 'Tata 407 (7 TON)',
+    capacityKg: 7000,
+    transporterId: 'TRN-001',
+  },
+  {
+    id: 'VEH-007',
+    registration: 'KA01CD7890',
+    type: 'Eicher 14FT (10 TON)',
+    capacityKg: 10000,
+    transporterId: 'TRN-002',
+  },
+  {
+    id: 'VEH-008',
+    registration: 'GJ05EF1234',
+    type: 'Ashok Leyland 32FT (16 TON)',
+    capacityKg: 16000,
+    transporterId: 'TRN-001',
+  },
+  {
+    id: 'VEH-009',
+    registration: 'UP16GH5678',
+    type: 'Mahindra Bolero Pickup (1.5 TON)',
+    capacityKg: 1500,
+    transporterId: 'TRN-003',
+  },
 ];
