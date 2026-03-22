@@ -8,6 +8,7 @@ import {
   Plus,
   Warehouse,
   ClipboardList,
+  Save,
 } from 'lucide-react';
 import { PageHeader, EmptyState, StatusBadge, PRPickerModal, WarehousePickerModal } from '@/components';
 import { FlowDiagram, ShipmentExpandPanel } from '@/components/flow';
@@ -306,6 +307,18 @@ export function LoadWorkspace() {
           {shipments.length} Shipment{shipments.length !== 1 ? 's' : ''}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          {isDraft && (
+            <button
+              onClick={() => {/* Save is implicit — Zustand state is always current. Show feedback. */
+                const el = document.getElementById('save-feedback');
+                if (el) { el.textContent = '✅ Saved'; el.classList.remove('hidden'); setTimeout(() => el.classList.add('hidden'), 2000); }
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-text-secondary shadow-sm hover:bg-gray-50 transition-colors"
+            >
+              <Save className="h-4 w-4" />
+              Save
+            </button>
+          )}
           {canPlanAll && isDraft && (
             <button
               onClick={handlePlanAll}
@@ -315,6 +328,7 @@ export function LoadWorkspace() {
               Plan All
             </button>
           )}
+          <span id="save-feedback" className="hidden text-sm text-success font-medium"></span>
         </div>
       </div>
 
