@@ -310,12 +310,30 @@ function layoutCrossDock(
   const nodes: FlowNodeData[] = [];
   const edges: FlowEdgeData[] = [];
 
-  // Separate feeders from line-haul
-  const feeders = shipments.filter((sh) => sh.parentShipmentId);
-  const lineHauls = shipments.filter((sh) => !sh.parentShipmentId);
+  // Separate feeders from line-haul based on STOP TYPES (not parentShipmentId)
+  // Feeder = has TRANSFER_OUT stops (hands material to another truck)
+  // Line-Haul = has TRANSFER_IN stops (receives material from feeders)
+  // If a ship has both, it's a relay — treat as line-haul
+  const feeders = shipments.filter((sh) => {
+    const shipStops = stops.filter((s) => s.shipmentId === sh.id);
+    const hasTransferOut = shipStops.some((s) => s.type === 'TRANSFER_OUT');
+    const hasTransferIn = shipStops.some((s) => s.type === 'TRANSFER_IN');
+    return hasTransferOut && !hasTransferIn;
+  });
+  const lineHauls = shipments.filter((sh) => {
+    const shipStops = stops.filter((s) => s.shipmentId === sh.id);
+    const hasTransferIn = shipStops.some((s) => s.type === 'TRANSFER_IN');
+    return hasTransferIn;
+  });
+  // Ships with neither transfer type — treat as feeders if they have pickups, else skip
+  const unclassified = shipments.filter((sh) => !feeders.includes(sh) && !lineHauls.includes(sh));
+  const allFeeders = [...feeders, ...unclassified.filter((sh) => {
+    const shipStops = stops.filter((s) => s.shipmentId === sh.id);
+    return shipStops.some((s) => s.type === 'PICKUP');
+  })];
   const lineHaul = lineHauls[0];
 
-  const feederCount = feeders.length || 1;
+  const feederCount = allFeeders.length || 1;
   const sourceCount = prs.length || 1;
   const maxLeftRows = Math.max(sourceCount, feederCount);
   const midRow = Math.ceil(maxLeftRows / 2);
@@ -332,7 +350,7 @@ function layoutCrossDock(
   });
 
   // Feeders (col 2)
-  feeders.forEach((sh, idx) => {
+  allFeeders.forEach((sh, idx) => {
     nodes.push({
       id: `shipment-${sh.id}`,
       type: 'shipment',
@@ -368,7 +386,7 @@ function layoutCrossDock(
 
   // Edges: source → feeder (match by PR)
   prs.forEach((pr) => {
-    const feeder = feeders.find((f) => {
+    const feeder = allFeeders.find((f) => {
       const fStops = stops.filter((s) => s.shipmentId === f.id && s.type === 'PICKUP');
       return fStops.some((s) => s.prId === pr.id);
     });
@@ -390,7 +408,7 @@ function layoutCrossDock(
   });
 
   // Edges: each feeder → line-haul (1:1 TRANSFER_OUT → TRANSFER_IN pairs)
-  feeders.forEach((f) => {
+  allFeeders.forEach((f) => {
     // Find all TRANSFER_OUT stops on this feeder
     const transferOutStops = stops.filter(
       (s) => s.shipmentId === f.id && s.type === 'TRANSFER_OUT',
