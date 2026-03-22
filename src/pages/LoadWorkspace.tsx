@@ -28,16 +28,17 @@ import type { Shipment, Stop } from '@/types';
 
 export function LoadWorkspace() {
   const { id } = useParams<{ id: string }>();
-  const load = useLoadStore((s) => s.loads.find((l) => l.id === id));
-  const shipments = useShipmentStore((s) =>
-    s.shipments.filter((sh) => sh.loadId === id)
-  );
+  const allLoads = useLoadStore((s) => s.loads);
+  const allShipments = useShipmentStore((s) => s.shipments);
   const updateShipment = useShipmentStore((s) => s.updateShipment);
   const allStops = useStopStore((s) => s.stops);
   const updateStop = useStopStore((s) => s.updateStop);
   const prs = usePRStore((s) => s.pickupRequests);
   const transporters = useReferenceStore((s) => s.transporters);
   const vehicles = useReferenceStore((s) => s.vehicles);
+
+  const load = useMemo(() => allLoads.find((l) => l.id === id), [allLoads, id]);
+  const shipments = useMemo(() => allShipments.filter((sh) => sh.loadId === id), [allShipments, id]);
 
   const [expandedShipment, setExpandedShipment] = useState<string | null>(null);
   const [showPRs, setShowPRs] = useState(true);

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { MapPin, Calendar, FileText } from 'lucide-react';
 import { PageHeader, StatusBadge, EmptyState } from '@/components';
@@ -6,7 +7,8 @@ import { usePRStore } from '@/stores';
 export function PickupRequestDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const pr = usePRStore((s) => s.pickupRequests.find((p) => p.id === id));
+  const allPRs = usePRStore((s) => s.pickupRequests);
+  const pr = useMemo(() => allPRs.find((p) => p.id === id), [allPRs, id]);
 
   if (!pr) {
     return (

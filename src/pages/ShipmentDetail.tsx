@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   FileText,
@@ -31,13 +31,17 @@ import type { StopItem, Stop } from '@/types';
 
 export function ShipmentDetail() {
   const { id } = useParams<{ id: string }>();
-  const shipment = useShipmentStore((s) => s.shipments.find((sh) => sh.id === id));
-  const stops = useStopStore((s) =>
-    s.stops.filter((st) => st.shipmentId === id).sort((a, b) => a.sequence - b.sequence)
-  );
+  const allShipments = useShipmentStore((s) => s.shipments);
+  const allStopsRaw = useStopStore((s) => s.stops);
   const loads = useLoadStore((s) => s.loads);
-  const shipments = useShipmentStore((s) => s.shipments);
   const prs = usePRStore((s) => s.pickupRequests);
+
+  const shipment = useMemo(() => allShipments.find((sh) => sh.id === id), [allShipments, id]);
+  const stops = useMemo(
+    () => allStopsRaw.filter((st) => st.shipmentId === id).sort((a, b) => a.sequence - b.sequence),
+    [allStopsRaw, id]
+  );
+  const shipments = allShipments;
 
   const [expandedCompleted, setExpandedCompleted] = useState<Set<string>>(new Set());
 
