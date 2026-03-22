@@ -119,7 +119,7 @@ export function FlowDiagram({
     if (layout.columns === 5) {
       return 'minmax(140px, 180px) 1fr 100px 1fr minmax(140px, 180px)';
     }
-    return 'minmax(160px, 200px) 1fr minmax(160px, 200px)';
+    return 'minmax(160px, 220px) 1fr minmax(160px, 250px)';
   }, [layout.columns]);
 
   // Group nodes by (col, row) for grid placement
@@ -335,7 +335,7 @@ export function FlowDiagram({
   }, [connectingFrom, connectingSourceLabel]);
 
   return (
-    <div className="relative rounded-xl border border-gray-200 bg-card p-4 overflow-hidden">
+    <div className="relative rounded-xl border border-gray-200 bg-card p-4 overflow-visible">
       {/* Connection hint bar */}
       {connectingFrom && (
         <div className="mb-3 flex items-center gap-2 rounded-lg bg-primary-50 border border-primary-200 px-3 py-2 text-xs text-primary-700">

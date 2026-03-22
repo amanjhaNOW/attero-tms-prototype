@@ -5,6 +5,7 @@ export { useStopStore } from './useStopStore';
 export { useReferenceStore } from './useReferenceStore';
 export {
   completeStop,
+  detectPattern,
   dispatchShipment,
   planShipment,
   cancelShipment,

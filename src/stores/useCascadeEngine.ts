@@ -2,7 +2,41 @@ import { usePRStore } from './usePRStore';
 import { useLoadStore } from './useLoadStore';
 import { useShipmentStore } from './useShipmentStore';
 import { useStopStore } from './useStopStore';
-import type { StopItem, Stop } from '@/types';
+import type { StopItem, Stop, Load } from '@/types';
+import { generateId } from '@/lib/idGenerator';
+
+/**
+ * Detect the correct pattern label for a load based on current state.
+ * Called after every mutation that changes shipments, stops, or PRs on a load.
+ */
+export function detectPattern(loadId: string): Load['patternLabel'] {
+  const loadStore = useLoadStore.getState();
+  const shipmentStore = useShipmentStore.getState();
+  const stopStore = useStopStore.getState();
+
+  const load = loadStore.getLoadById(loadId);
+  if (!load) return 'direct';
+
+  const shipments = shipmentStore.shipments.filter((s) => s.loadId === loadId);
+  const allStops = stopStore.stops.filter((s) =>
+    shipments.some((sh) => sh.id === s.shipmentId),
+  );
+
+  const hasTransfer = allStops.some(
+    (s) => s.type === 'TRANSFER_IN' || s.type === 'TRANSFER_OUT',
+  );
+  if (hasTransfer) return 'cross_dock';
+
+  const hasWarehouseDest = load.destination.type === 'warehouse';
+  if (hasWarehouseDest) return 'warehouse_consolidation';
+
+  const prCount = load.prIds.length;
+  const shipCount = shipments.length;
+
+  if (prCount <= 1 && shipCount <= 1) return 'direct';
+  if (prCount >= 2 && shipCount <= 1) return 'milk_run';
+  return 'multi_vehicle';
+}
 
 /**
  * Cascade Engine — orchestrates state transitions across entities.
@@ -317,11 +351,9 @@ export function addShipmentToLoad(loadId: string) {
 
   // Generate IDs
   const allShipments = shipmentStore.shipments;
-  const shipNum = allShipments.length + 1;
-  const shipId = `SHP-${String(shipNum).padStart(3, '0')}`;
+  const shipId = generateId('SHP');
 
   const newStopIds: string[] = [];
-  let stopCounter = stopStore.stops.length + 1;
 
   // Filter: only clone PICKUP + DELIVER stops (not TRANSFER_OUT / TRANSFER_IN)
   const stopsToClone = firstShipStops.filter(
@@ -332,8 +364,7 @@ export function addShipmentToLoad(loadId: string) {
     // Clone PICKUP + DELIVER stops with new IDs and re-sequence
     let seq = 1;
     stopsToClone.forEach((srcStop) => {
-      const newStopId = `STOP-${String(stopCounter).padStart(3, '0')}`;
-      stopCounter += 1;
+      const newStopId = generateId('STOP');
       newStopIds.push(newStopId);
 
       stopStore.addStop({
@@ -359,8 +390,7 @@ export function addShipmentToLoad(loadId: string) {
       .filter((pr): pr is NonNullable<typeof pr> => pr !== undefined);
     let seq = 1;
     selectedPRs.forEach((pr) => {
-      const pickupStopId = `STOP-${String(stopCounter).padStart(3, '0')}`;
-      stopCounter += 1;
+      const pickupStopId = generateId('STOP');
       newStopIds.push(pickupStopId);
 
       stopStore.addStop({
@@ -383,7 +413,7 @@ export function addShipmentToLoad(loadId: string) {
     });
 
     // DELIVER stop
-    const deliverStopId = `STOP-${String(stopCounter).padStart(3, '0')}`;
+    const deliverStopId = generateId('STOP');
     newStopIds.push(deliverStopId);
     const allPlannedItems = selectedPRs.flatMap((pr) =>
       pr.materials.map((m) => ({
@@ -427,20 +457,16 @@ export function addShipmentToLoad(loadId: string) {
     createdAt: new Date().toISOString(),
   });
 
-  // Update load: add shipment ID and update pattern
-  const loadShipments = allShipments.filter((s) => s.loadId === loadId);
-  const newShipmentCount = loadShipments.length + 1; // +1 for the new one
-  const newPattern =
-    load.prIds.length === 1 && newShipmentCount >= 2
-      ? ('multi_vehicle' as const)
-      : load.patternLabel;
-
+  // Update load: add shipment ID
   loadStore.updateLoad(loadId, {
     shipmentIds: [...load.shipmentIds, shipId],
-    patternLabel: newPattern,
     // If load was fully_planned, adding a draft shipment makes it partially_planned
     status: load.status === 'fully_planned' ? 'partially_planned' : load.status,
   });
+
+  // Re-detect pattern after adding shipment
+  const newPattern = detectPattern(loadId);
+  loadStore.updateLoad(loadId, { patternLabel: newPattern });
 }
 
 /**
@@ -480,6 +506,11 @@ export function removeStopFromShipment(stopId: string) {
     shipmentStore.updateShipment(stop.shipmentId, {
       stopIds: shipment.stopIds.filter((id) => id !== stopId),
     });
+
+    // Re-detect pattern after removing stop
+    const loadStore = useLoadStore.getState();
+    const newPattern = detectPattern(shipment.loadId);
+    loadStore.updateLoad(shipment.loadId, { patternLabel: newPattern });
   }
 }
 
@@ -516,7 +547,7 @@ export function addStopToShipment(
     }
   });
 
-  const newStopId = `STOP-${String(stopStore.stops.length + 1).padStart(3, '0')}`;
+  const newStopId = generateId('STOP');
 
   if (type === 'PICKUP' && prId) {
     const pr = prStore.getPRById(prId);
@@ -582,7 +613,7 @@ export function addStopToShipment(
 
     // Create the paired stop on the linked shipment FIRST so we have its ID
     const linkedType = type === 'TRANSFER_OUT' ? 'TRANSFER_IN' : 'TRANSFER_OUT';
-    const pairedStopId = `STOP-${String(stopStore.stops.length + 2).padStart(3, '0')}`;
+    const pairedStopId = generateId('STOP');
 
     const linkedShipStops = stopStore.stops
       .filter((s) => s.shipmentId === linkedShipmentId)
@@ -678,6 +709,13 @@ export function addStopToShipment(
       stopStore.updateStop(targetDeliverStop.id, { plannedItems: deliverItems });
     }
   }
+
+  // Re-detect pattern after adding stop (especially transfer stops change pattern)
+  const shipmentForPattern = shipmentStore.getShipmentById(shipmentId);
+  if (shipmentForPattern) {
+    const newPattern = detectPattern(shipmentForPattern.loadId);
+    loadStore.updateLoad(shipmentForPattern.loadId, { patternLabel: newPattern });
+  }
 }
 
 /**
@@ -695,10 +733,8 @@ export function addLineHaulToLoad(loadId: string) {
   if (!load) return;
 
   // Generate IDs
-  const shipNum = shipmentStore.shipments.length + 1;
-  const shipId = `SHP-${String(shipNum).padStart(3, '0')}`;
-  const stopCounter = stopStore.stops.length + 1;
-  const deliverStopId = `STOP-${String(stopCounter).padStart(3, '0')}`;
+  const shipId = generateId('SHP');
+  const deliverStopId = generateId('STOP');
 
   // Aggregate planned items from all PRs in the load (for the DELIVER stop)
   const allPlannedItems = load.prIds
@@ -768,8 +804,7 @@ export function addEmptyShipmentToLoad(loadId: string) {
   if (!load) return;
 
   // Generate ID
-  const shipNum = shipmentStore.shipments.length + 1;
-  const shipId = `SHP-${String(shipNum).padStart(3, '0')}`;
+  const shipId = generateId('SHP');
 
   const firstPR = prStore.getPRById(load.prIds[0]);
   shipmentStore.addShipment({
@@ -840,6 +875,10 @@ export function removeShipmentFromLoad(shipmentId: string) {
       shipmentIds: load.shipmentIds.filter((id) => id !== shipmentId),
       // Don't auto-remove PRs from load — they stay for reassignment
     });
+
+    // Re-detect pattern after removing shipment
+    const newPattern = detectPattern(load.id);
+    loadStore.updateLoad(load.id, { patternLabel: newPattern });
   }
 }
 

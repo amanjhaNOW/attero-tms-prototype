@@ -8,8 +8,10 @@ import {
   useStopStore,
   usePRStore,
   useReferenceStore,
+  detectPattern,
 } from '@/stores';
 import type { PickupRequest, Location } from '@/types';
+import { generateId } from '@/lib/idGenerator';
 
 interface WarehouseSourceItem {
   prId: string;
@@ -65,10 +67,8 @@ export function createLoadFromPRs(prIds: string[], destinationId?: string): stri
   };
 
   // Generate IDs
-  const loadNum = loadStore.loads.length + 1;
-  const loadId = `LOAD-${String(loadNum).padStart(3, '0')}`;
-  const shipNum = shipmentStore.shipments.length + 1;
-  const shipId = `SHP-${String(shipNum).padStart(3, '0')}`;
+  const loadId = generateId('LOAD');
+  const shipId = generateId('SHP');
 
   const selectedPRs = prIds
     .map((id) => prStore.pickupRequests.find((pr) => pr.id === id))
@@ -82,7 +82,7 @@ export function createLoadFromPRs(prIds: string[], destinationId?: string): stri
 
   // Create PICKUP stops
   selectedPRs.forEach((pr) => {
-    const pickupStopId = `STOP-${String(stopStore.stops.length + seq).padStart(3, '0')}`;
+    const pickupStopId = generateId('STOP');
     stopIdsForShipment.push(pickupStopId);
 
     const prQty = pr.materials.reduce((s, m) => s + m.plannedQty, 0);
@@ -114,7 +114,7 @@ export function createLoadFromPRs(prIds: string[], destinationId?: string): stri
   });
 
   // Create DELIVER stop
-  const deliverStopId = `STOP-${String(stopStore.stops.length + seq).padStart(3, '0')}`;
+  const deliverStopId = generateId('STOP');
   stopIdsForShipment.push(deliverStopId);
 
   const allPlannedItems = selectedPRs.flatMap((pr) =>
@@ -165,7 +165,7 @@ export function createLoadFromPRs(prIds: string[], destinationId?: string): stri
     createdAt: new Date().toISOString(),
   });
 
-  // Determine pattern
+  // Determine initial pattern
   const patternLabel: 'direct' | 'milk_run' = prIds.length === 1 ? 'direct' : 'milk_run';
 
   // Create load
@@ -227,10 +227,8 @@ export function createLoadFromWarehouse(
     type: destLoc.type as 'plant' | 'warehouse',
   };
 
-  const loadNum = loadStore.loads.length + 1;
-  const loadId = `LOAD-${String(loadNum).padStart(3, '0')}`;
-  const shipNum = shipmentStore.shipments.length + 1;
-  const shipId = `SHP-${String(shipNum).padStart(3, '0')}`;
+  const loadId = generateId('LOAD');
+  const shipId = generateId('SHP');
 
   const stopIdsForShipment: string[] = [];
   const allPrIds: string[] = [];
@@ -244,7 +242,7 @@ export function createLoadFromWarehouse(
 
     if (!firstInboundShipmentId) firstInboundShipmentId = whItem.inboundShipmentId;
 
-    const pickupStopId = `STOP-${String(stopStore.stops.length + seq).padStart(3, '0')}`;
+    const pickupStopId = generateId('STOP');
     stopIdsForShipment.push(pickupStopId);
     if (!allPrIds.includes(prId)) allPrIds.push(prId);
     totalQty += qty;
@@ -278,7 +276,7 @@ export function createLoadFromWarehouse(
   });
 
   // DELIVER stop
-  const deliverStopId = `STOP-${String(stopStore.stops.length + seq).padStart(3, '0')}`;
+  const deliverStopId = generateId('STOP');
   stopIdsForShipment.push(deliverStopId);
 
   const allPlannedItems = items.flatMap(({ prId, qty }) => {
@@ -377,8 +375,7 @@ export function createEmptyLoad(destinationId?: string): string {
     type: destLoc.type as 'plant' | 'warehouse',
   };
 
-  const loadNum = loadStore.loads.length + 1;
-  const loadId = `LOAD-${String(loadNum).padStart(3, '0')}`;
+  const loadId = generateId('LOAD');
 
   loadStore.addLoad({
     id: loadId,
@@ -423,8 +420,7 @@ export function addPRsToLoad(loadId: string, prIds: string[]): void {
 
   if (syncedShipmentIds.length === 0) {
     // Create a new shipment for this load
-    const shipNum = shipmentStore.shipments.length + 1;
-    const newShipId = `SHP-${String(shipNum).padStart(3, '0')}`;
+    const newShipId = generateId('SHP');
     shipmentStore.addShipment({
       id: newShipId,
       loadId: loadId,
@@ -461,9 +457,6 @@ export function addPRsToLoad(loadId: string, prIds: string[]): void {
 
   if (newPrIds.length === 0) return;
 
-  // Global stop counter for unique IDs
-  let stopCounter = stopStore.stops.length + 1;
-
   // For each synced shipment, add PICKUP stops for each new PR
   syncedShipmentIds.forEach((shipId) => {
     const shipStops = stopStore.stops
@@ -479,8 +472,7 @@ export function addPRsToLoad(loadId: string, prIds: string[]): void {
       const pr = prStore.pickupRequests.find((p) => p.id === prId);
       if (!pr) return;
 
-      const pickupStopId = `STOP-${String(stopCounter).padStart(3, '0')}`;
-      stopCounter += 1;
+      const pickupStopId = generateId('STOP');
       newStopIdsForShipment.push(pickupStopId);
 
       stopStore.addStop({
@@ -512,8 +504,7 @@ export function addPRsToLoad(loadId: string, prIds: string[]): void {
 
     if (!deliverStop) {
       // Create DELIVER stop
-      const deliverStopId = `STOP-${String(stopCounter).padStart(3, '0')}`;
-      stopCounter += 1;
+      const deliverStopId = generateId('STOP');
       const allPRs = allPrIdsNow
         .map((id) => prStore.pickupRequests.find((p) => p.id === id))
         .filter(Boolean);
@@ -573,17 +564,16 @@ export function addPRsToLoad(loadId: string, prIds: string[]): void {
     }
   });
 
-  // Determine new pattern
-  const allPrIdsNow = [...load.prIds, ...newPrIds];
-  const patternLabel: 'direct' | 'milk_run' | 'warehouse_consolidation' =
-    allPrIdsNow.length === 1 ? 'direct' : 'milk_run';
-
   // Update load
+  const allPrIdsNow = [...load.prIds, ...newPrIds];
   loadStore.updateLoad(loadId, {
     prIds: allPrIdsNow,
     totalPlannedQty: load.totalPlannedQty + addedQty,
-    patternLabel: load.patternLabel === 'warehouse_consolidation' ? 'warehouse_consolidation' : patternLabel,
   });
+
+  // Re-detect pattern after adding PRs
+  const newPattern = detectPattern(loadId);
+  loadStore.updateLoad(loadId, { patternLabel: newPattern });
 
   // Update PRs
   newPrIds.forEach((prId) => {
@@ -667,14 +657,14 @@ export function removePRFromLoad(loadId: string, prId: string): void {
     ? removedPR.materials.reduce((s, m) => s + m.plannedQty, 0)
     : 0;
 
-  const patternLabel: 'direct' | 'milk_run' | 'warehouse_consolidation' =
-    newPrIds.length <= 1 ? 'direct' : 'milk_run';
-
   loadStore.updateLoad(loadId, {
     prIds: newPrIds,
     totalPlannedQty: Math.max(0, load.totalPlannedQty - removedQty),
-    patternLabel: load.patternLabel === 'warehouse_consolidation' ? 'warehouse_consolidation' : patternLabel,
   });
+
+  // Re-detect pattern after removing PR
+  const newPattern = detectPattern(loadId);
+  loadStore.updateLoad(loadId, { patternLabel: newPattern });
 
   // Update PR back to pending
   if (removedPR) {

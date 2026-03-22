@@ -70,6 +70,12 @@ export function FlowEdge({
     const fromRect = fromEl.getBoundingClientRect();
     const toRect = toEl.getBoundingClientRect();
 
+    // Skip rendering if any rect has zero size (element not yet laid out)
+    if (fromRect.width === 0 || toRect.width === 0 || containerRect.width === 0) {
+      setCoords(null);
+      return;
+    }
+
     setCoords({
       fromX: fromRect.right - containerRect.left,
       fromY: fromRect.top + fromRect.height / 2 - containerRect.top,

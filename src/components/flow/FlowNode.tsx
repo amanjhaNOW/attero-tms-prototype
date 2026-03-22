@@ -201,14 +201,14 @@ function ShipmentCard({
           : 'border-gray-200 hover:border-primary-300'
       }`}
     >
-      {/* BUG 1: Delete button for draft shipments */}
+      {/* Delete button for draft shipments — always visible */}
       {onDelete && shipment.status === 'draft' && (
         <button
           onClick={(e) => {
             e.stopPropagation();
             onDelete();
           }}
-          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-400 hover:text-red-500 hover:border-red-400 text-xs z-20 opacity-0 group-hover/shipcard:opacity-100 transition-opacity shadow-sm"
+          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-400 hover:text-red-500 hover:border-red-400 text-xs z-20 shadow-sm"
         >
           ✕
         </button>
@@ -224,11 +224,14 @@ function ShipmentCard({
         </Link>
         <StatusBadge status={shipment.status} />
       </div>
-      <div className="mt-1.5 flex items-center gap-1.5">
-        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${roleBadgeClass}`}>
-          {displayRole}
-        </span>
-      </div>
+      {/* Only show role badge for meaningful roles (Feeder/Line-Haul/Relay), not "Direct" which is a load-level pattern */}
+      {displayRole !== 'Direct' && (
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${roleBadgeClass}`}>
+            {displayRole}
+          </span>
+        </div>
+      )}
       {routeSummary && (
         <p className="mt-1 text-[10px] text-text-muted truncate" title={routeSummary}>
           {routeSummary}
@@ -284,18 +287,18 @@ function DestinationCard({
 }) {
   const icon = destination.type === 'warehouse' ? '🏭' : '🏢';
   return (
-    <div className="w-[180px] rounded-lg border border-gray-200 bg-white px-3 py-2.5 shadow-sm">
+    <div className="min-w-[180px] max-w-[240px] rounded-lg border border-gray-200 bg-white px-3 py-2.5 shadow-sm">
       <div className="flex items-start gap-2">
-        <span className="mt-0.5 text-base">{icon}</span>
+        <span className="mt-0.5 text-base shrink-0">{icon}</span>
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-bold text-text-primary leading-tight truncate">
+          <p className="text-xs font-bold text-text-primary leading-tight truncate" title={destination.name}>
             {destination.name}
           </p>
-          <p className="text-[11px] text-text-muted mt-0.5">
+          <p className="text-[11px] text-text-muted mt-0.5 truncate">
             {destination.city}, {destination.state}
           </p>
           <div className="mt-1 flex items-center gap-1">
-            <MapPin className="h-3 w-3 text-text-muted" />
+            <MapPin className="h-3 w-3 text-text-muted shrink-0" />
             <span className="text-[10px] text-text-muted capitalize">
               {destination.type}
             </span>
