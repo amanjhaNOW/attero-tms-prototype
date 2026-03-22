@@ -155,7 +155,7 @@ export function LoadWorkspace() {
     );
   });
 
-  const canAddShipment = load.prIds.length === 1 && load.status !== 'completed';
+  const canAddShipment = load.status !== 'completed' && load.status !== 'in_execution';
   const isDraft = load.status === 'draft';
   const excludePRIds = useMemo(() => new Set(load.prIds), [load.prIds]);
 
@@ -520,7 +520,7 @@ export function LoadWorkspace() {
       </div>
 
       {/* ── Plan All (bottom) ────────────────────── */}
-      {canPlanAll && isDraft && (
+      {canPlanAll && (isDraft || load.status === 'partially_planned') && (
         <div className="flex justify-center pt-1">
           <button
             onClick={handlePlanAll}
