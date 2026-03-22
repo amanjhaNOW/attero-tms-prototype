@@ -150,4 +150,23 @@ export const mockLoads: Load[] = [
     status: 'completed',
     createdAt: '2026-03-10T10:00:00Z',
   },
+  {
+    id: 'LOAD-008',
+    prIds: ['REQ-00013', 'REQ-00014'],
+    shipmentIds: ['SHP-007', 'SHP-008', 'SHP-009'],
+    destination: {
+      name: 'Attero Recycling Pvt Ltd Haridwar',
+      state: 'Uttarakhand',
+      city: 'Haridwar',
+      pin: '247661',
+      address: 'Plot No. 4, Sector 6, IIE SIDCUL, Haridwar, Uttarakhand 247661',
+      type: 'plant',
+    },
+    totalPlannedQty: 8000,
+    totalActualQty: 0,
+    documents: [],
+    patternLabel: 'cross_dock',
+    status: 'draft',
+    createdAt: '2026-03-22T14:30:00Z',
+  },
 ];

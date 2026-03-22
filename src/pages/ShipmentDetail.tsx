@@ -28,6 +28,7 @@ import {
   dispatchShipment,
 } from '@/stores';
 import type { StopItem, Stop } from '@/types';
+import { getStopDisplayLabel, getShipmentRole } from '@/lib/stopDisplayLabel';
 
 export function ShipmentDetail() {
   const { id } = useParams<{ id: string }>();
@@ -57,6 +58,11 @@ export function ShipmentDetail() {
     grossWeight: number;
     netWeight: number;
   }>({ tareWeight: 0, grossWeight: 0, netWeight: 0 });
+
+  // ── Transfer / Handover form state ────────────────
+  const [handoverLocation, setHandoverLocation] = useState<Record<string, string>>({});
+  const [handoverQty, setHandoverQty] = useState<Record<string, number>>({});
+  const [transferError, setTransferError] = useState<string | null>(null);
 
   if (!shipment) {
     return (
@@ -90,18 +96,38 @@ export function ShipmentDetail() {
   const isMilkRun = load?.patternLabel === 'milk_run';
   const pickupStops = stops.filter((s) => s.type === 'PICKUP');
   const deliverStops = stops.filter((s) => s.type === 'DELIVER');
+  const transferOutStops = useMemo(() => stops.filter((s) => s.type === 'TRANSFER_OUT'), [stops]);
+  const transferInStops = useMemo(() => stops.filter((s) => s.type === 'TRANSFER_IN'), [stops]);
   const allPickupsCompleted = pickupStops.every((s) => s.status === 'completed');
 
-  // Find the active (next pending) stop — with milk run logic
-  // For milk run: next PICKUP that's pending, or if all pickups done, next pending DELIVER
-  const activeStop = (() => {
-    const nextPendingPickup = pickupStops.find((s) => s.status === 'pending');
-    if (nextPendingPickup) return nextPendingPickup;
-    if (allPickupsCompleted) {
-      return deliverStops.find((s) => s.status === 'pending');
+  // Shipment role detection
+  const shipmentRole = useMemo(() => getShipmentRole(stops), [stops]);
+
+  // Find the active (next pending) stop — follows sequence order
+  // For cross-dock: PICKUP → TRANSFER_OUT → TRANSFER_IN → DELIVER
+  const activeStop = useMemo(() => {
+    // Sequence-ordered: find first pending stop
+    const nextPending = stops.find((s) => s.status === 'pending');
+    if (!nextPending) return undefined;
+
+    // DELIVER is blocked until all pickups complete
+    if (nextPending.type === 'DELIVER' && !allPickupsCompleted) {
+      return undefined;
     }
-    return stops.find((s) => s.status === 'pending');
-  })();
+
+    // TRANSFER_IN is blocked until all linked TRANSFER_OUTs are complete
+    if (nextPending.type === 'TRANSFER_IN') {
+      const linkedOuts = allStopsRaw.filter(
+        (s) => s.type === 'TRANSFER_OUT' && s.linkedStopId === nextPending.id,
+      );
+      const allOutsComplete = linkedOuts.every((s) => s.status === 'completed');
+      if (!allOutsComplete && linkedOuts.length > 0) {
+        return nextPending; // Return it but we'll show it as "waiting"
+      }
+    }
+
+    return nextPending;
+  }, [stops, allPickupsCompleted, allStopsRaw]);
 
   // Initialize actual items for the active stop if not done yet
   if (activeStop && activeStop.type === 'PICKUP' && !initializedStops.has(activeStop.id)) {
@@ -173,6 +199,71 @@ export function ShipmentDetail() {
     [weights, pickupStops]
   );
 
+  const handleCompleteHandover = useCallback(
+    (stopId: string) => {
+      const stop = stops.find((s) => s.id === stopId);
+      if (!stop) return;
+
+      // Update location if user specified a meeting point
+      const meetingPoint = handoverLocation[stopId];
+      if (meetingPoint) {
+        useStopStore.getState().updateStop(stopId, {
+          location: { ...stop.location, name: meetingPoint, address: meetingPoint },
+        });
+      }
+
+      // Build actual items from the stop's planned items (or custom qty)
+      const qty = handoverQty[stopId];
+      const handoverItems: StopItem[] = stop.plannedItems.map((item) => ({
+        material: item.material,
+        qty: qty && qty > 0 ? qty : item.qty,
+        unit: item.unit,
+      }));
+
+      const result = completeStop(stopId, handoverItems);
+      if (!result.success) {
+        setTransferError(result.message || 'Failed to complete handover');
+      } else {
+        setTransferError(null);
+      }
+    },
+    [stops, handoverLocation, handoverQty],
+  );
+
+  const handleCompleteReceive = useCallback(
+    (stopId: string) => {
+      setTransferError(null);
+
+      // Gather actual items from all linked completed TRANSFER_OUTs
+      const stop = stops.find((s) => s.id === stopId);
+      if (!stop) return;
+
+      const freshStops = useStopStore.getState().stops;
+      const linkedOuts = freshStops.filter(
+        (s) => s.type === 'TRANSFER_OUT' && s.linkedStopId === stopId,
+      );
+      const receiveItems: StopItem[] = linkedOuts.flatMap((out) =>
+        out.actualItems.length > 0 ? out.actualItems : out.plannedItems,
+      );
+
+      // Also update location from first completed TRANSFER_OUT
+      const firstCompletedOut = linkedOuts.find((s) => s.status === 'completed');
+      if (firstCompletedOut && firstCompletedOut.location.name) {
+        useStopStore.getState().updateStop(stopId, {
+          location: { ...firstCompletedOut.location },
+        });
+      }
+
+      const result = completeStop(stopId, receiveItems);
+      if (!result.success) {
+        setTransferError(result.message || 'Cannot confirm receipt yet');
+      } else {
+        setTransferError(null);
+      }
+    },
+    [stops],
+  );
+
   const handleSkipStop = useCallback(
     (stopId: string) => {
       useStopStore.getState().updateStop(stopId, {
@@ -237,6 +328,47 @@ export function ShipmentDetail() {
               {allPickupsCompleted && ' ✓ All pickups done — ready for delivery'}
             </p>
           </div>
+        </div>
+      )}
+
+      {/* Cross-dock / Transfer indicator banner */}
+      {shipmentRole && (
+        <div className={`rounded-lg px-4 py-3 flex items-center gap-3 ${
+          shipmentRole === 'Feeder'
+            ? 'bg-amber-50 border border-amber-200'
+            : shipmentRole === 'Line-Haul'
+              ? 'bg-blue-50 border border-blue-200'
+              : 'bg-purple-50 border border-purple-200'
+        }`}>
+          <span className="text-lg">{shipmentRole === 'Feeder' ? '🤝' : shipmentRole === 'Line-Haul' ? '📥' : '🔄'}</span>
+          <div>
+            <p className={`text-sm font-semibold ${
+              shipmentRole === 'Feeder' ? 'text-amber-800' : shipmentRole === 'Line-Haul' ? 'text-blue-800' : 'text-purple-800'
+            }`}>
+              {shipmentRole} Shipment
+            </p>
+            <p className={`text-xs ${
+              shipmentRole === 'Feeder' ? 'text-amber-600' : shipmentRole === 'Line-Haul' ? 'text-blue-600' : 'text-purple-600'
+            }`}>
+              {shipmentRole === 'Feeder' && `${pickupStops.length} pickup → ${transferOutStops.length} handover`}
+              {shipmentRole === 'Line-Haul' && `${transferInStops.length} receive → ${deliverStops.length} delivery`}
+              {shipmentRole === 'Relay' && `${transferInStops.length} receive → ${transferOutStops.length} handover`}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Transfer error message */}
+      {transferError && (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 flex items-center gap-3">
+          <span className="text-lg">⚠️</span>
+          <p className="text-sm text-red-700">{transferError}</p>
+          <button
+            onClick={() => setTransferError(null)}
+            className="ml-auto text-xs text-red-500 hover:text-red-700"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -324,13 +456,25 @@ export function ShipmentDetail() {
                 const isDeliverBlocked =
                   stop.type === 'DELIVER' && !allPickupsCompleted && stop.status === 'pending';
 
+                // TRANSFER_IN blocked until all linked TRANSFER_OUTs complete
+                const linkedOuts = stop.type === 'TRANSFER_IN'
+                  ? allStopsRaw.filter(
+                      (s) => s.type === 'TRANSFER_OUT' && s.linkedStopId === stop.id,
+                    )
+                  : [];
+                const isTransferInBlocked =
+                  stop.type === 'TRANSFER_IN' &&
+                  stop.status === 'pending' &&
+                  linkedOuts.length > 0 &&
+                  !linkedOuts.every((s) => s.status === 'completed');
+
                 return (
                   <StopTimelineNode
                     key={stop.id}
                     stop={stop}
                     isLast={index === stops.length - 1}
-                    isActive={isActiveStop && !isDeliverBlocked}
-                    isBlocked={isDeliverBlocked}
+                    isActive={isActiveStop && !isDeliverBlocked && !isTransferInBlocked}
+                    isBlocked={isDeliverBlocked || isTransferInBlocked}
                     isExpanded={expandedCompleted.has(stop.id)}
                     onToggle={() => toggleCompleted(stop.id)}
                     // Pickup props
@@ -343,6 +487,20 @@ export function ShipmentDetail() {
                     weights={weights}
                     onWeightsChange={setWeights}
                     onCompleteDelivery={() => handleCompleteDelivery(stop.id)}
+                    // Transfer / Handover props
+                    onCompleteHandover={() => handleCompleteHandover(stop.id)}
+                    onCompleteReceive={() => handleCompleteReceive(stop.id)}
+                    handoverLocation={handoverLocation[stop.id] ?? ''}
+                    onHandoverLocationChange={(val) =>
+                      setHandoverLocation((prev) => ({ ...prev, [stop.id]: val }))
+                    }
+                    handoverQty={handoverQty[stop.id] ?? 0}
+                    onHandoverQtyChange={(val) =>
+                      setHandoverQty((prev) => ({ ...prev, [stop.id]: val }))
+                    }
+                    linkedTransferOuts={linkedOuts}
+                    allShipments={shipments}
+                    allStops={allStopsRaw}
                     // Skip
                     onSkip={() => handleSkipStop(stop.id)}
                     // PR context
@@ -459,6 +617,17 @@ interface StopTimelineNodeProps {
   weights: { tareWeight: number; grossWeight: number; netWeight: number };
   onWeightsChange: (w: { tareWeight: number; grossWeight: number; netWeight: number }) => void;
   onCompleteDelivery: () => void;
+  // Transfer / Handover props
+  onCompleteHandover?: () => void;
+  onCompleteReceive?: () => void;
+  handoverLocation?: string;
+  onHandoverLocationChange?: (val: string) => void;
+  handoverQty?: number;
+  onHandoverQtyChange?: (val: number) => void;
+  linkedTransferOuts?: Stop[];
+  allShipments?: import('@/types').Shipment[];
+  allStops?: Stop[];
+  // Common
   onSkip: () => void;
   linkedPR?: { id: string; clientName: string; materials: { type: string; plannedQty: number; unit: string }[] };
   linkedPickupStop?: Stop;
@@ -479,6 +648,15 @@ function StopTimelineNode({
   weights,
   onWeightsChange,
   onCompleteDelivery,
+  onCompleteHandover,
+  onCompleteReceive,
+  handoverLocation,
+  onHandoverLocationChange,
+  handoverQty,
+  onHandoverQtyChange,
+  linkedTransferOuts,
+  allShipments,
+  allStops,
   onSkip,
   linkedPR,
   linkedPickupStop,
@@ -544,13 +722,43 @@ function StopTimelineNode({
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold uppercase tracking-wider text-text-muted">
-                Stop {stop.sequence} — {stop.type}
+                Stop {stop.sequence} — {
+                  stop.type === 'TRANSFER_OUT'
+                    ? '🤝 Handover'
+                    : stop.type === 'TRANSFER_IN'
+                      ? '📥 Receive'
+                      : stop.type
+                }
               </span>
               <StatusBadge status={stop.status} />
               {/* Show client name for PICKUP stops */}
               {stop.type === 'PICKUP' && linkedPR && (
                 <span className="text-xs font-medium text-primary bg-primary-50 rounded-full px-2 py-0.5">
                   {linkedPR.clientName}
+                </span>
+              )}
+              {/* Show target for TRANSFER_OUT */}
+              {stop.type === 'TRANSFER_OUT' && allStops && allShipments && (
+                <span className="text-xs font-medium text-amber-700 bg-amber-50 rounded-full px-2 py-0.5">
+                  {(() => {
+                    const linked = allStops.find((s) => s.id === stop.linkedStopId);
+                    const targetShip = linked ? allShipments.find((s) => s.id === linked.shipmentId) : null;
+                    return targetShip ? `→ ${targetShip.id}` : '→ TBD';
+                  })()}
+                </span>
+              )}
+              {/* Show sources for TRANSFER_IN */}
+              {stop.type === 'TRANSFER_IN' && linkedTransferOuts && allShipments && (
+                <span className="text-xs font-medium text-blue-700 bg-blue-50 rounded-full px-2 py-0.5">
+                  {(() => {
+                    const sourceIds = linkedTransferOuts
+                      .map((s) => {
+                        const ship = allShipments.find((sh) => sh.id === s.shipmentId);
+                        return ship?.id || '?';
+                      })
+                      .join(', ');
+                    return sourceIds ? `← ${sourceIds}` : '← feeders';
+                  })()}
                 </span>
               )}
             </div>
@@ -579,7 +787,7 @@ function StopTimelineNode({
           <p className="text-sm text-text-muted">{stop.location.address}</p>
 
           {/* Blocked message for DELIVER when pickups not done */}
-          {isBlocked && (
+          {isBlocked && stop.type === 'DELIVER' && (
             <div className="mt-3 rounded-lg bg-orange-50 border border-orange-200 p-3">
               <p className="text-xs font-medium text-orange-600">
                 ⏳ Waiting for all pickups to complete before delivery can begin
@@ -589,6 +797,41 @@ function StopTimelineNode({
                   {allPickupStops.filter((s) => s.status === 'completed').length}/{allPickupStops.length} pickups completed
                 </p>
               )}
+            </div>
+          )}
+
+          {/* Blocked message for TRANSFER_IN when handovers not done */}
+          {isBlocked && stop.type === 'TRANSFER_IN' && linkedTransferOuts && allShipments && (
+            <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
+              <p className="text-xs font-medium text-amber-700">
+                ⏳ Waiting for handover from:
+              </p>
+              <div className="mt-1 space-y-1">
+                {linkedTransferOuts.map((out) => {
+                  const ship = allShipments.find((s) => s.id === out.shipmentId);
+                  const isDone = out.status === 'completed';
+                  return (
+                    <div key={out.id} className="flex items-center gap-2 text-xs">
+                      {isDone ? (
+                        <span className="text-green-600">✅</span>
+                      ) : (
+                        <span className="text-amber-500">⏳</span>
+                      )}
+                      <span className={isDone ? 'text-green-700 line-through' : 'text-amber-800 font-medium'}>
+                        {ship?.id || out.shipmentId}
+                      </span>
+                      {isDone && (
+                        <span className="text-green-600 text-[10px]">
+                          ({out.actualItems.reduce((s, i) => s + i.qty, 0).toLocaleString()} Kg)
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] text-amber-600 mt-2">
+                {linkedTransferOuts.filter((s) => s.status === 'completed').length}/{linkedTransferOuts.length} handovers completed
+              </p>
             </div>
           )}
 
@@ -690,6 +933,152 @@ function StopTimelineNode({
                 >
                   <SkipForward className="inline h-3.5 w-3.5 mr-1" />
                   Skip Stop
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── ACTIVE TRANSFER_OUT (Handover) STOP ────── */}
+          {isActive && stop.type === 'TRANSFER_OUT' && (
+            <div className="mt-4 space-y-4">
+              {/* Planned material */}
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-2">
+                  Material to Hand Over
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {stop.plannedItems.map((item, i) => (
+                    <span
+                      key={i}
+                      className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700"
+                    >
+                      {item.material}: {item.qty.toLocaleString()} {item.unit}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Meeting point */}
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-1 block">
+                  Meeting Point
+                </label>
+                <input
+                  type="text"
+                  value={handoverLocation ?? ''}
+                  onChange={(e) => onHandoverLocationChange?.(e.target.value)}
+                  placeholder="Enter meeting point location..."
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+                />
+                <p className="text-[10px] text-text-muted mt-1">
+                  Free text — where will the trucks meet?
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
+                <button
+                  onClick={onCompleteHandover}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-amber-700 transition-colors"
+                >
+                  <Check className="h-4 w-4" />
+                  Complete Handover ✅
+                </button>
+                <button
+                  onClick={onSkip}
+                  className="text-sm text-text-muted hover:text-text-secondary transition-colors"
+                >
+                  <SkipForward className="inline h-3.5 w-3.5 mr-1" />
+                  Skip
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── ACTIVE TRANSFER_IN (Receive) STOP ────── */}
+          {isActive && stop.type === 'TRANSFER_IN' && linkedTransferOuts && allShipments && (
+            <div className="mt-4 space-y-4">
+              {/* Show qty from each linked TRANSFER_OUT */}
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-2">
+                  Material from Feeders
+                </p>
+                <div className="space-y-1.5">
+                  {linkedTransferOuts.map((out) => {
+                    const ship = allShipments.find((s) => s.id === out.shipmentId);
+                    const items = out.status === 'completed' && out.actualItems.length > 0
+                      ? out.actualItems
+                      : out.plannedItems;
+                    const totalQty = items.reduce((s, i) => s + i.qty, 0);
+                    return (
+                      <div
+                        key={out.id}
+                        className={`flex items-center gap-2 rounded-lg px-3 py-2 ${
+                          out.status === 'completed'
+                            ? 'bg-green-50 border border-green-200'
+                            : 'bg-gray-50 border border-gray-200'
+                        }`}
+                      >
+                        <span className="text-sm">
+                          {out.status === 'completed' ? '✅' : '⏳'}
+                        </span>
+                        <span className="text-xs font-bold text-text-primary">
+                          From {ship?.id || 'Unknown'}:
+                        </span>
+                        <span className="text-xs text-text-secondary">
+                          {totalQty.toLocaleString()} Kg
+                        </span>
+                        {items.map((item, i) => (
+                          <span
+                            key={i}
+                            className="rounded-full bg-white px-1.5 py-0.5 text-[10px] text-text-muted"
+                          >
+                            {item.material}
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Location auto-fills from first completed TRANSFER_OUT */}
+              {(() => {
+                const firstCompleted = linkedTransferOuts.find((s) => s.status === 'completed');
+                if (firstCompleted && firstCompleted.location.name) {
+                  return (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-1">
+                        Meeting Point
+                      </p>
+                      <p className="text-sm text-text-primary bg-gray-50 rounded-lg px-3 py-2">
+                        📍 {firstCompleted.location.name}
+                      </p>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
+              <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
+                {(() => {
+                  const allDone = linkedTransferOuts.every((s) => s.status === 'completed');
+                  return (
+                    <button
+                      onClick={onCompleteReceive}
+                      disabled={!allDone}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Check className="h-4 w-4" />
+                      {allDone ? 'Confirm Receipt ✅' : '⏳ Waiting for handovers...'}
+                    </button>
+                  );
+                })()}
+                <button
+                  onClick={onSkip}
+                  className="text-sm text-text-muted hover:text-text-secondary transition-colors"
+                >
+                  <SkipForward className="inline h-3.5 w-3.5 mr-1" />
+                  Skip
                 </button>
               </div>
             </div>

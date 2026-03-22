@@ -13,3 +13,4 @@ export {
   removeStopFromShipment,
   addStopToShipment,
 } from './useCascadeEngine';
+export type { CompleteStopResult } from './useCascadeEngine';

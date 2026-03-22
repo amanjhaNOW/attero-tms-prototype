@@ -195,12 +195,39 @@ export function ShipmentExpandPanel({
         return '📦';
       case 'DELIVER':
         return '📦';
-      case 'TRANSFER_IN':
-        return '🔄';
       case 'TRANSFER_OUT':
-        return '🔄';
+        return '🤝';
+      case 'TRANSFER_IN':
+        return '📥';
       default:
         return '📍';
+    }
+  };
+
+  const stopLabel = (stop: Stop) => {
+    switch (stop.type) {
+      case 'PICKUP':
+        return 'PICKUP';
+      case 'DELIVER':
+        return 'DELIVER';
+      case 'TRANSFER_OUT': {
+        const linkedStop = allStops.find((s) => s.id === stop.linkedStopId);
+        const targetShip = linkedStop
+          ? allShipments.find((s) => s.id === linkedStop.shipmentId)
+          : null;
+        return `HANDOVER → ${targetShip?.id || 'TBD'}`;
+      }
+      case 'TRANSFER_IN': {
+        const feeders = allStops
+          .filter((s) => s.type === 'TRANSFER_OUT' && s.linkedStopId === stop.id)
+          .map((s) => {
+            const ship = allShipments.find((sh) => sh.id === s.shipmentId);
+            return ship?.id || '?';
+          });
+        return feeders.length > 0 ? `RECEIVE ← ${feeders.join(', ')}` : 'RECEIVE';
+      }
+      default:
+        return stop.type;
     }
   };
 
@@ -223,16 +250,18 @@ export function ShipmentExpandPanel({
           <h3 className="text-sm font-bold text-text-primary">
             {shipment.id}
           </h3>
-          {shipment.parentShipmentId && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
-              Feeder
-            </span>
-          )}
-          {childFeeders.length > 0 && (
-            <span className="rounded-full bg-primary-100 px-2 py-0.5 text-[10px] font-semibold text-primary">
-              Line-Haul
-            </span>
-          )}
+          {(() => {
+            const hasTO = shipStops.some((s) => s.type === 'TRANSFER_OUT');
+            const hasTI = shipStops.some((s) => s.type === 'TRANSFER_IN');
+            const role = hasTO && hasTI ? 'Relay' : hasTO ? 'Feeder' : hasTI ? 'Line-Haul' : null;
+            if (role === 'Feeder')
+              return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Feeder</span>;
+            if (role === 'Line-Haul')
+              return <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">Line-Haul</span>;
+            if (role === 'Relay')
+              return <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-semibold text-purple-700">Relay</span>;
+            return null;
+          })()}
         </div>
         <button
           onClick={onClose}
@@ -247,7 +276,7 @@ export function ShipmentExpandPanel({
         {parentShipment && (
           <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 mb-4">
             <p className="text-xs text-amber-800">
-              <span className="font-semibold">Feeds into:</span>{' '}
+              <span className="font-semibold">🤝 Handover to:</span>{' '}
               <Link
                 to={`/shipments/${parentShipment.id}`}
                 className="font-bold text-primary hover:underline"
@@ -259,9 +288,9 @@ export function ShipmentExpandPanel({
           </div>
         )}
         {childFeeders.length > 0 && (
-          <div className="rounded-lg bg-primary-50 border border-primary-200 p-3 mb-4">
-            <p className="text-xs text-primary-700">
-              <span className="font-semibold">Receives from:</span>{' '}
+          <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 mb-4">
+            <p className="text-xs text-blue-700">
+              <span className="font-semibold">📥 Receives from:</span>{' '}
               {childFeeders.map((f, i) => {
                 const fStops = allStops.filter(
                   (s) => s.shipmentId === f.id && s.type === 'PICKUP',
@@ -418,7 +447,12 @@ export function ShipmentExpandPanel({
               Stops & Route ({pickupStops.length} pickup
               {pickupStops.length !== 1 ? 's' : ''} → {deliverStops.length} deliver
               {deliverStops.length !== 1 ? 'ies' : 'y'}
-              {transferStops.length > 0 ? ` · ${transferStops.length} transfer` : ''})
+              {transferStops.filter((s) => s.type === 'TRANSFER_OUT').length > 0
+                ? ` · ${transferStops.filter((s) => s.type === 'TRANSFER_OUT').length} handover`
+                : ''}
+              {transferStops.filter((s) => s.type === 'TRANSFER_IN').length > 0
+                ? ` · ${transferStops.filter((s) => s.type === 'TRANSFER_IN').length} receive`
+                : ''})
             </h4>
 
             <div className="space-y-1.5">
@@ -479,8 +513,8 @@ export function ShipmentExpandPanel({
                     <span className="text-sm shrink-0">{stopIcon(stop.type)}</span>
 
                     {/* Stop type label */}
-                    <span className="text-[10px] font-bold text-text-muted uppercase w-20 shrink-0">
-                      {stop.type.replace('_', ' ')}
+                    <span className="text-[10px] font-bold text-text-muted uppercase shrink-0 max-w-[140px] truncate" title={stopLabel(stop)}>
+                      {stopLabel(stop)}
                     </span>
 
                     {/* Stop details */}
@@ -597,49 +631,34 @@ export function ShipmentExpandPanel({
                   )}
                 </div>
 
-                {/* TRANSFER sections (only if other shipments exist) */}
+                {/* HANDOVER section — creates TRANSFER_OUT on this truck + TRANSFER_IN on target */}
                 {otherShipments.length > 0 && (
-                  <>
-                    <div>
-                      <p className="text-[11px] font-semibold text-text-secondary mb-1.5">
-                        🔄 TRANSFER OUT — to another shipment
-                      </p>
-                      <div className="space-y-1">
-                        {otherShipments.map((sh) => (
-                          <button
-                            key={sh.id}
-                            onClick={() => handleAddTransferStop('TRANSFER_OUT', sh.id)}
-                            className="flex items-center gap-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-left text-xs hover:bg-amber-50 hover:border-amber-200 transition-colors"
-                          >
-                            <span className="font-bold text-primary">{sh.id}</span>
-                            <span className="text-text-muted">
-                              {sh.vehicleRegistration || 'Unassigned'}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
+                  <div>
+                    <p className="text-[11px] font-semibold text-text-secondary mb-1">
+                      🤝 HANDOVER — This truck will meet another truck
+                    </p>
+                    <p className="text-[10px] text-text-muted mb-1.5">
+                      Select which truck to meet. System auto-creates handover on this truck + receive on the target.
+                    </p>
+                    <div className="space-y-1">
+                      {otherShipments.map((sh) => (
+                        <button
+                          key={sh.id}
+                          onClick={() => handleAddTransferStop('TRANSFER_OUT', sh.id)}
+                          className="flex items-center gap-2 w-full rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 text-left text-xs hover:bg-amber-100 hover:border-amber-300 transition-colors"
+                        >
+                          <span className="text-sm">🤝</span>
+                          <span className="font-bold text-amber-800">{sh.id}</span>
+                          <span className="text-text-muted">
+                            {sh.vehicleRegistration || 'Unassigned'}
+                          </span>
+                          <span className="ml-auto text-[10px] text-amber-600">
+                            Handover →
+                          </span>
+                        </button>
+                      ))}
                     </div>
-
-                    <div>
-                      <p className="text-[11px] font-semibold text-text-secondary mb-1.5">
-                        🔄 TRANSFER IN — from another shipment
-                      </p>
-                      <div className="space-y-1">
-                        {otherShipments.map((sh) => (
-                          <button
-                            key={sh.id}
-                            onClick={() => handleAddTransferStop('TRANSFER_IN', sh.id)}
-                            className="flex items-center gap-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-left text-xs hover:bg-amber-50 hover:border-amber-200 transition-colors"
-                          >
-                            <span className="font-bold text-primary">{sh.id}</span>
-                            <span className="text-text-muted">
-                              {sh.vehicleRegistration || 'Unassigned'}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </>
+                  </div>
                 )}
 
                 <button

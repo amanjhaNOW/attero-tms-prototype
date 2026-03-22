@@ -27,18 +27,51 @@ import type { StopItem, Stop } from '@/types';
  *   This is the KEY differentiator: warehouse is intermediate, plant is final.
  */
 
+/**
+ * Result type for completeStop — indicates success/failure and reason.
+ */
+export interface CompleteStopResult {
+  success: boolean;
+  message?: string;
+  /** When a TRANSFER_OUT completes, signals if all handovers for the linked TRANSFER_IN are done */
+  allHandoversDone?: boolean;
+}
+
 export function completeStop(
   stopId: string,
   actualItems?: StopItem[],
   weights?: { tareWeight: number; grossWeight: number; netWeight: number }
-) {
+): CompleteStopResult {
   const stopStore = useStopStore.getState();
   const prStore = usePRStore.getState();
   const shipmentStore = useShipmentStore.getState();
   const loadStore = useLoadStore.getState();
 
   const stop = stopStore.getStopById(stopId);
-  if (!stop) return;
+  if (!stop) return { success: false, message: 'Stop not found' };
+
+  // ── TRANSFER_IN validation: ALL linked TRANSFER_OUTs must be completed ──
+  if (stop.type === 'TRANSFER_IN') {
+    const allStops = stopStore.stops;
+    // Find all TRANSFER_OUT stops that link to this TRANSFER_IN
+    const linkedTransferOuts = allStops.filter(
+      (s) => s.type === 'TRANSFER_OUT' && s.linkedStopId === stop.id,
+    );
+
+    const pendingOuts = linkedTransferOuts.filter((s) => s.status !== 'completed');
+    if (pendingOuts.length > 0) {
+      const pendingShipIds = pendingOuts
+        .map((s) => {
+          const sh = shipmentStore.getShipmentById(s.shipmentId);
+          return sh?.id || s.shipmentId;
+        })
+        .join(', ');
+      return {
+        success: false,
+        message: `Cannot confirm receipt. Waiting for handovers from: ${pendingShipIds}`,
+      };
+    }
+  }
 
   // 1. Update stop status to completed
   const stopUpdates: Partial<Stop> = {
@@ -65,6 +98,22 @@ export function completeStop(
     // Only move to picked_up if still in pending/planned
     if (pr && (pr.status === 'pending' || pr.status === 'planned')) {
       prStore.updatePR(stop.prId, { status: 'picked_up' });
+    }
+  }
+
+  // 2b. If TRANSFER_OUT completes: check if ALL linked TRANSFER_OUTs for the same TRANSFER_IN are done
+  let allHandoversDone = false;
+  if (stop.type === 'TRANSFER_OUT' && stop.linkedStopId) {
+    const allStops = useStopStore.getState().stops;
+    const linkedTransferIn = allStops.find((s) => s.id === stop.linkedStopId);
+    if (linkedTransferIn && linkedTransferIn.type === 'TRANSFER_IN') {
+      // Find all TRANSFER_OUTs pointing to the same TRANSFER_IN
+      const allLinkedOuts = allStops.filter(
+        (s) => s.type === 'TRANSFER_OUT' && s.linkedStopId === linkedTransferIn.id,
+      );
+      allHandoversDone = allLinkedOuts.every(
+        (s) => s.id === stopId ? true : s.status === 'completed',
+      );
     }
   }
 
@@ -171,6 +220,8 @@ export function completeStop(
       }
     }
   }
+
+  return { success: true, allHandoversDone };
 }
 
 export function dispatchShipment(shipmentId: string) {

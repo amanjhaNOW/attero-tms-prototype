@@ -26,6 +26,8 @@ export interface FlowEdgeData {
   shipmentId?: string;
   /** Type of stop this edge represents */
   stopType?: 'PICKUP' | 'DELIVER' | 'TRANSFER_IN' | 'TRANSFER_OUT';
+  /** Whether this edge represents a transfer (ship→ship handover) */
+  isTransfer?: boolean;
 }
 
 export interface FlowLayoutResult {
@@ -395,10 +397,12 @@ function layoutCrossDock(
       id: `edge-ship-${f.id}-hub`,
       fromNodeId: `shipment-${f.id}`,
       toNodeId: 'hub',
+      label: '🤝 Handover',
       status: edgeStatus(f),
       stopId: transferOutStop?.id,
       shipmentId: f.id,
       stopType: 'TRANSFER_OUT',
+      isTransfer: true,
     });
   });
 
@@ -411,10 +415,12 @@ function layoutCrossDock(
       id: `edge-hub-ship-${lineHaul.id}`,
       fromNodeId: 'hub',
       toNodeId: `shipment-${lineHaul.id}`,
+      label: '📥 Receive',
       status: edgeStatus(lineHaul),
       stopId: transferInStop?.id,
       shipmentId: lineHaul.id,
       stopType: 'TRANSFER_IN',
+      isTransfer: true,
     });
 
     // Edge: line-haul → destination

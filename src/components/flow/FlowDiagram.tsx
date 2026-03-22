@@ -440,6 +440,7 @@ export function FlowDiagram({
                     ? () => handleDisconnect(edge.stopId)
                     : undefined
                 }
+                isTransfer={edge.isTransfer}
               />
             );
           })}

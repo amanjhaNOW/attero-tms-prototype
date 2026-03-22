@@ -10,6 +10,8 @@ interface FlowEdgeProps {
   layoutVersion?: number;
   /** Called when user clicks the disconnect button */
   onDisconnect?: () => void;
+  /** Whether this edge represents a transfer (ship→ship handover) */
+  isTransfer?: boolean;
 }
 
 interface PathCoords {
@@ -41,6 +43,7 @@ export function FlowEdge({
   label,
   layoutVersion,
   onDisconnect,
+  isTransfer,
 }: FlowEdgeProps) {
   const [coords, setCoords] = useState<PathCoords | null>(null);
   const [isHovered, setIsHovered] = useState(false);
@@ -73,6 +76,12 @@ export function FlowEdge({
   const style = getStatusStyle(status);
   const midX = (fromX + toX) / 2;
 
+  // Transfer edges use amber/dashed style
+  const transferColor = '#D97706';
+  const effectiveStroke = isTransfer ? transferColor : style.stroke;
+  const effectiveDash = isTransfer ? '6 4' : (style.dashArray === 'none' ? undefined : style.dashArray);
+  const effectiveWidth = isTransfer ? 2 : style.strokeWidth;
+
   // Bezier path
   const pathD = `M ${fromX} ${fromY} C ${midX} ${fromY}, ${midX} ${toY}, ${toX} ${toY}`;
 
@@ -86,6 +95,9 @@ export function FlowEdge({
   // Midpoint for disconnect button
   const disconnectX = midX;
   const disconnectY = (fromY + toY) / 2;
+
+  // Measure label width for transfer labels (longer text)
+  const labelWidth = label ? Math.max(40, label.length * 7 + 12) : 40;
 
   return (
     <g
@@ -106,18 +118,18 @@ export function FlowEdge({
       <path
         d={pathD}
         fill="none"
-        stroke={isHovered ? '#1976D2' : style.stroke}
-        strokeWidth={isHovered ? Math.max(style.strokeWidth, 2.5) : style.strokeWidth}
-        strokeDasharray={style.dashArray === 'none' ? undefined : style.dashArray}
+        stroke={isHovered ? (isTransfer ? '#B45309' : '#1976D2') : effectiveStroke}
+        strokeWidth={isHovered ? Math.max(effectiveWidth, 2.5) : effectiveWidth}
+        strokeDasharray={effectiveDash}
         strokeLinecap="round"
         className="transition-all duration-150"
       >
-        {style.animate && (
+        {(style.animate || isTransfer) && (
           <animate
             attributeName="stroke-dashoffset"
             from="24"
             to="0"
-            dur="1s"
+            dur={isTransfer ? '1.5s' : '1s'}
             repeatCount="indefinite"
           />
         )}
@@ -125,8 +137,8 @@ export function FlowEdge({
       <path
         d={arrowD}
         fill="none"
-        stroke={isHovered ? '#1976D2' : style.stroke}
-        strokeWidth={isHovered ? Math.max(style.strokeWidth, 2.5) : style.strokeWidth}
+        stroke={isHovered ? (isTransfer ? '#B45309' : '#1976D2') : effectiveStroke}
+        strokeWidth={isHovered ? Math.max(effectiveWidth, 2.5) : effectiveWidth}
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -135,21 +147,21 @@ export function FlowEdge({
       {label && (
         <g>
           <rect
-            x={labelX - 20}
+            x={labelX - labelWidth / 2}
             y={labelY - 8}
-            width={40}
+            width={labelWidth}
             height={16}
             rx={4}
-            fill="white"
-            stroke={style.stroke}
-            strokeWidth={0.5}
+            fill={isTransfer ? '#FFFBEB' : 'white'}
+            stroke={isTransfer ? transferColor : style.stroke}
+            strokeWidth={isTransfer ? 1 : 0.5}
           />
           <text
             x={labelX}
             y={labelY + 4}
             textAnchor="middle"
             className="text-[10px] font-medium"
-            fill="#424242"
+            fill={isTransfer ? '#92400E' : '#424242'}
           >
             {label}
           </text>

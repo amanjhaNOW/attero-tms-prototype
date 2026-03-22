@@ -71,4 +71,32 @@ export const mockClients: Client[] = [
     phone: '+91 9871234567',
     materialTypes: ['E-waste', 'Li-ion Battery', 'Iron'],
   },
+  {
+    id: 'CLT-006',
+    name: 'Jaipur E-Waste Collector',
+    address: {
+      name: 'Jaipur E-Waste Collector',
+      state: 'Rajasthan',
+      city: 'Jaipur',
+      pin: '302013',
+      address: 'Plot No. 8, Sitapura Industrial Area, Jaipur, Rajasthan 302013',
+    },
+    contactPerson: 'Vikram Rathore',
+    phone: '+91 9414567890',
+    materialTypes: ['E-waste', 'Iron', 'Copper'],
+  },
+  {
+    id: 'CLT-007',
+    name: 'Ajmer Industrial Recyclers',
+    address: {
+      name: 'Ajmer Industrial Recyclers',
+      state: 'Rajasthan',
+      city: 'Ajmer',
+      pin: '305001',
+      address: 'RIICO Industrial Area, Phase II, Ajmer, Rajasthan 305001',
+    },
+    contactPerson: 'Harish Meena',
+    phone: '+91 9829012345',
+    materialTypes: ['E-waste', 'Li-ion Battery'],
+  },
 ];

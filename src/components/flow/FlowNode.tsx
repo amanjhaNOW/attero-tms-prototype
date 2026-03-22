@@ -137,14 +137,28 @@ function ShipmentCard({
   selected?: boolean;
   onClick?: () => void;
 }) {
-  const typeLabel =
-    role === 'feeder'
-      ? 'Feeder'
-      : role === 'line-haul'
-        ? 'Line-Haul'
-        : shipment.parentShipmentId
-          ? 'Feeder'
-          : 'Direct';
+  // Auto-detect role from stops
+  const hasTransferOut = stops.some((s) => s.type === 'TRANSFER_OUT');
+  const hasTransferIn = stops.some((s) => s.type === 'TRANSFER_IN');
+  const detectedRole =
+    hasTransferOut && hasTransferIn
+      ? 'Relay'
+      : hasTransferOut
+        ? 'Feeder'
+        : hasTransferIn
+          ? 'Line-Haul'
+          : null;
+
+  const displayRole = detectedRole ?? (role === 'feeder' ? 'Feeder' : role === 'line-haul' ? 'Line-Haul' : shipment.parentShipmentId ? 'Feeder' : 'Direct');
+
+  const roleBadgeClass =
+    displayRole === 'Feeder'
+      ? 'bg-amber-100 text-amber-700'
+      : displayRole === 'Line-Haul'
+        ? 'bg-blue-100 text-blue-700'
+        : displayRole === 'Relay'
+          ? 'bg-purple-100 text-purple-700'
+          : 'bg-gray-100 text-text-secondary';
 
   // Build route summary from stop cities in sequence order
   const routeSummary = stops
@@ -175,8 +189,8 @@ function ShipmentCard({
         <StatusBadge status={shipment.status} />
       </div>
       <div className="mt-1.5 flex items-center gap-1.5">
-        <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-text-secondary">
-          {typeLabel}
+        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${roleBadgeClass}`}>
+          {displayRole}
         </span>
       </div>
       {routeSummary && (
