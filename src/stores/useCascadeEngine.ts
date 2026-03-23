@@ -788,6 +788,10 @@ export function addLineHaulToLoad(loadId: string) {
     // If load was fully_planned, adding a draft shipment makes it partially_planned
     status: load.status === 'fully_planned' ? 'partially_planned' : load.status,
   });
+
+  // Re-detect pattern
+  const newPattern = detectPattern(loadId);
+  loadStore.updateLoad(loadId, { patternLabel: newPattern });
 }
 
 /**
@@ -830,6 +834,10 @@ export function addEmptyShipmentToLoad(loadId: string) {
     shipmentIds: [...load.shipmentIds, shipId],
     status: load.status === 'fully_planned' ? 'partially_planned' : load.status,
   });
+
+  // Re-detect pattern
+  const newPattern = detectPattern(loadId);
+  loadStore.updateLoad(loadId, { patternLabel: newPattern });
 }
 
 /**
