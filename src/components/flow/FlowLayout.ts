@@ -340,12 +340,9 @@ function layoutCrossDock(
     const hasTransferIn = shipStops.some((s) => s.type === 'TRANSFER_IN');
     return hasTransferIn;
   });
-  // Ships with neither transfer type — treat as feeders if they have pickups, else skip
+  // Ships with neither transfer type — include ALL (even empty trucks)
   const unclassified = shipments.filter((sh) => !feeders.includes(sh) && !lineHauls.includes(sh));
-  const allFeeders = [...feeders, ...unclassified.filter((sh) => {
-    const shipStops = stops.filter((s) => s.shipmentId === sh.id);
-    return shipStops.some((s) => s.type === 'PICKUP');
-  })];
+  const allFeeders = [...feeders, ...unclassified];
   const lineHaul = lineHauls[0];
 
   const feederCount = allFeeders.length || 1;
@@ -450,21 +447,24 @@ function layoutCrossDock(
     });
   });
 
-  // Edge: line-haul → destination
-  if (lineHaul) {
+  // Edge: ANY shipment with DELIVER stop → destination (not just line-haul)
+  const allShipsForDest = [...allFeeders, ...(lineHaul ? [lineHaul] : [])];
+  allShipsForDest.forEach((sh) => {
     const deliverStop = stops.find(
-      (s) => s.shipmentId === lineHaul.id && s.type === 'DELIVER',
+      (s) => s.shipmentId === sh.id && s.type === 'DELIVER',
     );
-    edges.push({
-      id: `edge-ship-${lineHaul.id}-dest`,
-      fromNodeId: `shipment-${lineHaul.id}`,
-      toNodeId: 'destination',
-      status: edgeStatus(lineHaul),
-      stopId: deliverStop?.id,
-      shipmentId: lineHaul.id,
-      stopType: 'DELIVER',
-    });
-  }
+    if (deliverStop) {
+      edges.push({
+        id: `edge-ship-${sh.id}-dest`,
+        fromNodeId: `shipment-${sh.id}`,
+        toNodeId: 'destination',
+        status: edgeStatus(sh),
+        stopId: deliverStop.id,
+        shipmentId: sh.id,
+        stopType: 'DELIVER',
+      });
+    }
+  });
 
   return { nodes, edges, columns: 4, maxRows: maxLeftRows };
 }
