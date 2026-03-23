@@ -35,6 +35,8 @@ interface ShipmentExpandPanelProps {
   onSave: () => void;
   onMarkPlanned: () => void;
   onClose: () => void;
+  /** B3: Called to unplan a planned shipment */
+  onUnplan?: () => void;
 }
 
 export function ShipmentExpandPanel({
@@ -50,6 +52,7 @@ export function ShipmentExpandPanel({
   onSave,
   onMarkPlanned,
   onClose,
+  onUnplan,
 }: ShipmentExpandPanelProps) {
   const [addStopPickerOpen, setAddStopPickerOpen] = useState(false);
   const [confirmRemoveStopId, setConfirmRemoveStopId] = useState<string | null>(null);
@@ -722,6 +725,15 @@ export function ShipmentExpandPanel({
           >
             Save Changes
           </button>
+          {/* B3: Unplan button for planned shipments */}
+          {shipment.status === 'planned' && onUnplan && (
+            <button
+              onClick={onUnplan}
+              className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100 transition-colors"
+            >
+              Unplan (revert to draft)
+            </button>
+          )}
           {shipment.status === 'draft' && (
             <button
               onClick={onMarkPlanned}

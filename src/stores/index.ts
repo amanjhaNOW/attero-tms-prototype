@@ -8,6 +8,7 @@ export {
   detectPattern,
   dispatchShipment,
   planShipment,
+  unplanShipment,
   cancelShipment,
   addShipmentToLoad,
   addLineHaulToLoad,

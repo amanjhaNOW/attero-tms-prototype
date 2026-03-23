@@ -1,9 +1,9 @@
-import { forwardRef, useCallback } from 'react';
+import { forwardRef, useCallback, useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { X, Truck, MapPin } from 'lucide-react';
 import { StatusBadge } from '@/components/StatusBadge';
 import type { FlowNodeData } from './FlowLayout';
-import type { PickupRequest, Shipment, Stop, Location } from '@/types';
+import type { PickupRequest, Shipment, Stop, Location, LocationMaster } from '@/types';
 
 interface FlowNodeProps {
   nodeData: FlowNodeData;
@@ -22,6 +22,14 @@ interface FlowNodeProps {
   isConnectSource?: boolean;
   /** Whether this node is a valid target for the active connection */
   isValidTarget?: boolean;
+  /** Locations for destination change dropdown */
+  locations?: LocationMaster[];
+  /** Called when user selects a new destination */
+  onChangeDestination?: (locationId: string) => void;
+  /** Whether the load is in draft status */
+  isDraft?: boolean;
+  /** Called when user clicks Unplan on a planned shipment */
+  onUnplanShipment?: () => void;
 }
 
 /* ─── Connection Port ────────────────────────── */
@@ -59,10 +67,19 @@ function ConnectionPort({
       <button
         onClick={(e) => {
           e.stopPropagation();
+          if (isConnecting && !isValidTarget && !isActive) return; // C1: block click on invalid targets
           onClick();
         }}
-        className={`w-3 h-3 rounded-full border-2 transition-all duration-150 cursor-pointer ${portClasses}`}
-        title={isLeft ? 'Connect here' : 'Connect from here'}
+        className={`w-3 h-3 rounded-full border-2 transition-all duration-150 ${
+          isConnecting && !isValidTarget && !isActive ? 'cursor-not-allowed' : 'cursor-pointer'
+        } ${portClasses}`}
+        title={
+          isConnecting && !isValidTarget && !isActive
+            ? 'Planned — route locked'
+            : isLeft
+              ? 'Connect here'
+              : 'Connect from here'
+        }
       />
     </div>
   );
@@ -133,6 +150,7 @@ function ShipmentCard({
   selected,
   onClick,
   onDelete,
+  onUnplan,
 }: {
   shipment: Shipment;
   stops: Stop[];
@@ -140,6 +158,7 @@ function ShipmentCard({
   selected?: boolean;
   onClick?: () => void;
   onDelete?: () => void;
+  onUnplan?: () => void;
 }) {
   // Auto-detect role from stops
   const hasTransferOut = stops.some((s) => s.type === 'TRANSFER_OUT');
@@ -223,6 +242,19 @@ function ShipmentCard({
           {shipment.id}
         </Link>
         <StatusBadge status={shipment.status} />
+        {/* B2: Unplan button for planned shipments */}
+        {onUnplan && shipment.status === 'planned' && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onUnplan();
+            }}
+            className="ml-auto rounded px-1.5 py-0.5 text-[10px] font-medium text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-100 hover:border-amber-300 transition-colors"
+            title="Revert to draft"
+          >
+            Unplan
+          </button>
+        )}
       </div>
       {/* Only show role badge for meaningful roles (Feeder/Line-Haul/Relay), not "Direct" which is a load-level pattern */}
       {displayRole !== 'Direct' && (
@@ -282,12 +314,38 @@ function HubCard({ label }: { label: string }) {
 /* ─── Destination Node ───────────────────────── */
 function DestinationCard({
   destination,
+  locations,
+  onChangeDestination,
+  isDraft,
 }: {
   destination: Location & { type: 'plant' | 'warehouse' };
+  locations?: LocationMaster[];
+  onChangeDestination?: (locationId: string) => void;
+  isDraft?: boolean;
 }) {
   const icon = destination.type === 'warehouse' ? '🏭' : '🏢';
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [dropdownOpen]);
+
+  // Filter to plant + warehouse locations
+  const availableLocations = (locations ?? []).filter(
+    (l) => l.type === 'plant' || l.type === 'warehouse',
+  );
+
   return (
-    <div className="min-w-[180px] max-w-[240px] rounded-lg border border-gray-200 bg-white px-3 py-2.5 shadow-sm">
+    <div className="relative min-w-[180px] max-w-[240px] rounded-lg border border-gray-200 bg-white px-3 py-2.5 shadow-sm" ref={dropdownRef}>
       <div className="flex items-start gap-2">
         <span className="mt-0.5 text-base shrink-0">{icon}</span>
         <div className="min-w-0 flex-1">
@@ -305,6 +363,41 @@ function DestinationCard({
           </div>
         </div>
       </div>
+      {/* A1: Change destination dropdown — draft loads only */}
+      {isDraft && onChangeDestination && availableLocations.length > 0 && (
+        <div className="mt-1.5">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setDropdownOpen((v) => !v);
+            }}
+            className="text-[10px] font-medium text-primary hover:text-primary-600 hover:underline transition-colors"
+          >
+            Change ▾
+          </button>
+          {dropdownOpen && (
+            <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-1 z-30 w-56 animate-in slide-in-from-top-1">
+              {availableLocations.map((loc) => (
+                <button
+                  key={loc.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onChangeDestination(loc.id);
+                    setDropdownOpen(false);
+                  }}
+                  className="flex items-center gap-2 w-full rounded-md px-2.5 py-1.5 text-left text-xs hover:bg-primary-50 transition-colors"
+                >
+                  <span className="text-sm">{loc.type === 'warehouse' ? '🏭' : '🏢'}</span>
+                  <div className="min-w-0 flex-1">
+                    <span className="font-medium text-text-primary truncate block">{loc.name}</span>
+                    <span className="text-[10px] text-text-muted">{loc.city}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -323,6 +416,10 @@ export const FlowNode = forwardRef<HTMLDivElement, FlowNodeProps>(
       isConnecting,
       isConnectSource,
       isValidTarget,
+      locations,
+      onChangeDestination,
+      isDraft,
+      onUnplanShipment,
     },
     ref,
   ) => {
@@ -359,6 +456,7 @@ export const FlowNode = forwardRef<HTMLDivElement, FlowNodeProps>(
               selected={selected}
               onClick={onClick}
               onDelete={onDeleteShipment}
+              onUnplan={onUnplanShipment}
             />
           );
         }
@@ -370,7 +468,14 @@ export const FlowNode = forwardRef<HTMLDivElement, FlowNodeProps>(
           const destination = nodeData.data.destination as Location & {
             type: 'plant' | 'warehouse';
           };
-          return <DestinationCard destination={destination} />;
+          return (
+            <DestinationCard
+              destination={destination}
+              locations={locations}
+              onChangeDestination={onChangeDestination}
+              isDraft={isDraft}
+            />
+          );
         }
         default:
           return null;

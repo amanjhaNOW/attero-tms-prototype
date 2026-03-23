@@ -6,7 +6,7 @@ import {
   useEffect,
   createRef,
 } from 'react';
-import type { Load, Shipment, Stop, PickupRequest } from '@/types';
+import type { Load, Shipment, Stop, PickupRequest, LocationMaster } from '@/types';
 import { computeFlowLayout } from './FlowLayout';
 import type { FlowNodeData } from './FlowLayout';
 import { FlowNode } from './FlowNode';
@@ -22,6 +22,12 @@ interface FlowDiagramProps {
   selectedShipmentId?: string;
   onRemoveSource: (prId: string) => void;
   isDraft: boolean;
+  /** Locations for destination change dropdown */
+  locations?: LocationMaster[];
+  /** Called when user selects a new destination */
+  onChangeDestination?: (locationId: string) => void;
+  /** Called when user clicks Unplan on a planned shipment */
+  onUnplanShipment?: (shipmentId: string) => void;
 }
 
 interface ConnectingFrom {
@@ -40,6 +46,9 @@ export function FlowDiagram({
   selectedShipmentId,
   onRemoveSource,
   isDraft,
+  locations,
+  onChangeDestination,
+  onUnplanShipment,
 }: FlowDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [layoutVersion, setLayoutVersion] = useState(0);
@@ -198,17 +207,23 @@ export function FlowDiagram({
       if (target.id === connectingFrom.nodeId) return false;
 
       if (connectingFrom.nodeType === 'source') {
-        // Source can only connect to shipments
-        return target.type === 'shipment';
+        // Source can only connect to draft shipments (C1)
+        if (target.type === 'shipment') {
+          const ship = target.data.shipment as Shipment;
+          return ship.status === 'draft';
+        }
+        return false;
       }
 
       if (connectingFrom.nodeType === 'shipment') {
         // Shipment can connect to destination or another shipment
         if (target.type === 'destination') return true;
         if (target.type === 'shipment') {
+          const targetShip = target.data.shipment as Shipment;
           // Can't connect to self
-          const targetShipId = (target.data.shipment as Shipment).id;
-          return targetShipId !== connectingFrom.entityId;
+          if (targetShip.id === connectingFrom.entityId) return false;
+          // C1: only connect to draft shipments
+          return targetShip.status === 'draft';
         }
         return false;
       }
@@ -310,6 +325,17 @@ export function FlowDiagram({
       }
     },
     [],
+  );
+
+  /** C2: Check if a stop belongs to a draft shipment */
+  const isStopOnDraftShipment = useCallback(
+    (stopId: string) => {
+      const stop = useStopStore.getState().getStopById(stopId);
+      if (!stop) return false;
+      const ship = shipments.find((s) => s.id === stop.shipmentId);
+      return ship?.status === 'draft';
+    },
+    [shipments],
   );
 
   // Get a source label for the connection hint text
@@ -429,7 +455,10 @@ export function FlowDiagram({
                       : undefined
                   }
                   onDeleteShipment={
-                    node.type === 'shipment' && isDraft
+                    // C3: only pass delete for draft shipments
+                    node.type === 'shipment' &&
+                    isDraft &&
+                    (node.data.shipment as Shipment).status === 'draft'
                       ? () => handleDeleteShipment((node.data.shipment as Shipment).id)
                       : undefined
                   }
@@ -438,6 +467,16 @@ export function FlowDiagram({
                   isConnecting={!!connectingFrom}
                   isConnectSource={connectingFrom?.nodeId === node.id}
                   isValidTarget={nodeIsValidTarget}
+                  locations={node.type === 'destination' ? locations : undefined}
+                  onChangeDestination={node.type === 'destination' ? onChangeDestination : undefined}
+                  isDraft={isDraft}
+                  onUnplanShipment={
+                    node.type === 'shipment' &&
+                    (node.data.shipment as Shipment).status === 'planned' &&
+                    onUnplanShipment
+                      ? () => onUnplanShipment((node.data.shipment as Shipment).id)
+                      : undefined
+                  }
                 />
               </div>
             );
@@ -463,7 +502,7 @@ export function FlowDiagram({
                 label={edge.label}
                 layoutVersion={layoutVersion}
                 onDisconnect={
-                  isDraft && edge.stopId
+                  isDraft && edge.stopId && isStopOnDraftShipment(edge.stopId)
                     ? () => handleDisconnect(edge.stopId)
                     : undefined
                 }

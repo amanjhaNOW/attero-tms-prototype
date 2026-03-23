@@ -317,6 +317,36 @@ export function planShipment(shipmentId: string) {
   }
 }
 
+/**
+ * Unplan a shipment — revert from 'planned' back to 'draft'.
+ * Updates load status accordingly.
+ */
+export function unplanShipment(shipmentId: string) {
+  const shipmentStore = useShipmentStore.getState();
+  const loadStore = useLoadStore.getState();
+
+  const shipment = shipmentStore.getShipmentById(shipmentId);
+  if (!shipment || shipment.status !== 'planned') return;
+
+  shipmentStore.updateShipment(shipmentId, { status: 'draft' });
+
+  // Update load status
+  const load = loadStore.getLoadById(shipment.loadId);
+  if (load) {
+    const allShipments = shipmentStore.shipments.filter(
+      (s) => s.loadId === shipment.loadId,
+    );
+    const anyPlanned = allShipments.some(
+      (s) =>
+        s.id !== shipmentId &&
+        (s.status === 'planned' || s.status === 'in_transit'),
+    );
+    loadStore.updateLoad(shipment.loadId, {
+      status: anyPlanned ? 'partially_planned' : 'draft',
+    });
+  }
+}
+
 export function cancelShipment(shipmentId: string) {
   const shipmentStore = useShipmentStore.getState();
   const shipment = shipmentStore.getShipmentById(shipmentId);

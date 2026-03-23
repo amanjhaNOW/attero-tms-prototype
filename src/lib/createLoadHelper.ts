@@ -678,9 +678,12 @@ export function removePRFromLoad(loadId: string, prId: string): void {
 
 /**
  * Change load destination.
+ * A3: Calls detectPattern after change.
+ * A4: Only updates DELIVER stops on draft shipments.
  */
 export function changeLoadDestination(loadId: string, destinationId: string): void {
   const loadStore = useLoadStore.getState();
+  const shipmentStore = useShipmentStore.getState();
   const stopStore = useStopStore.getState();
   const refStore = useReferenceStore.getState();
 
@@ -701,8 +704,11 @@ export function changeLoadDestination(loadId: string, destinationId: string): vo
 
   loadStore.updateLoad(loadId, { destination: dest });
 
-  // Update all DELIVER stops
+  // A4: Update DELIVER stops only on draft shipments
   load.shipmentIds.forEach((shipId) => {
+    const ship = shipmentStore.getShipmentById(shipId);
+    if (ship && ship.status !== 'draft') return; // Skip non-draft
+
     const deliverStop = stopStore.stops.find(
       (s) => s.shipmentId === shipId && s.type === 'DELIVER',
     );
@@ -718,4 +724,8 @@ export function changeLoadDestination(loadId: string, destinationId: string): vo
       });
     }
   });
+
+  // A3: Re-detect pattern after destination change
+  const newPattern = detectPattern(loadId);
+  loadStore.updateLoad(loadId, { patternLabel: newPattern });
 }

@@ -19,6 +19,7 @@ import {
   usePRStore,
   useReferenceStore,
   planShipment,
+  unplanShipment,
   addShipmentToLoad,
   addLineHaulToLoad,
   addEmptyShipmentToLoad,
@@ -190,16 +191,57 @@ export function LoadWorkspace() {
     (prIds: string[]) => {
       if (!id) return;
       addPRsToLoad(id, prIds);
+      // C5: Warn if no draft ships after adding PRs
+      const draftShips = shipments.filter((s) => s.status === 'draft');
+      if (draftShips.length === 0) {
+        alert(
+          'All shipments are planned. Added PR to load but no truck has this pickup. Add a new truck or unplan one.',
+        );
+      }
     },
-    [id],
+    [id, shipments],
   );
 
+  // C4: Block PR removal if completed stops
   const handleRemovePR = useCallback(
     (prId: string) => {
       if (!id) return;
+      const prStops = allStops.filter((s) => s.prId === prId);
+      const completedStops = prStops.filter((s) => s.status === 'completed');
+      if (completedStops.length > 0) {
+        const shipId = completedStops[0].shipmentId;
+        alert(
+          `Can't remove — has completed stops on ${shipId}. Cancel the shipment first.`,
+        );
+        return;
+      }
       removePRFromLoad(id, prId);
     },
-    [id],
+    [id, allStops],
+  );
+
+  // A2 + C6: Change destination with partial warning
+  const handleChangeDestination = useCallback(
+    (locationId: string) => {
+      if (!id) return;
+      const plannedShips = shipments.filter((s) => s.status !== 'draft');
+      if (plannedShips.length > 0) {
+        const proceed = confirm(
+          `${plannedShips.length} shipment(s) are already planned. Only draft shipments will update. Proceed?`,
+        );
+        if (!proceed) return;
+      }
+      changeLoadDestination(id, locationId);
+    },
+    [id, shipments],
+  );
+
+  // B2/B3: Unplan shipment handler
+  const handleUnplanShipment = useCallback(
+    (shipmentId: string) => {
+      unplanShipment(shipmentId);
+    },
+    [],
   );
 
   const handleAddShipment = useCallback(() => {
@@ -332,6 +374,16 @@ export function LoadWorkspace() {
         </div>
       </div>
 
+      {/* ── A5. Warehouse Info Banner ────────────── */}
+      {load.destination.type === 'warehouse' && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
+          <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+          <span>
+            ⚠ Material will go to warehouse. PRs won't close until dispatched to plant.
+          </span>
+        </div>
+      )}
+
       {/* ── B. Action Buttons ────────────────────── */}
       {isDraft && (
         <div className="flex flex-wrap gap-2">
@@ -429,6 +481,9 @@ export function LoadWorkspace() {
           selectedShipmentId={expandedShipmentId ?? undefined}
           onRemoveSource={handleRemovePR}
           isDraft={isDraft}
+          locations={locations}
+          onChangeDestination={handleChangeDestination}
+          onUnplanShipment={handleUnplanShipment}
         />
       ) : (
         <div className="rounded-xl border-2 border-dashed border-gray-200 bg-card p-12">
@@ -490,6 +545,11 @@ export function LoadWorkspace() {
           onSave={() => handleSaveShipment(expandedShipment.id)}
           onMarkPlanned={() => handleMarkPlanned(expandedShipment.id)}
           onClose={() => setExpandedShipmentId(null)}
+          onUnplan={
+            expandedShipment.status === 'planned'
+              ? () => handleUnplanShipment(expandedShipment.id)
+              : undefined
+          }
         />
       )}
 
