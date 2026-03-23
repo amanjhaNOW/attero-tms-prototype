@@ -57,51 +57,56 @@ function layoutDirect(
   const nodes: FlowNodeData[] = [];
   const edges: FlowEdgeData[] = [];
   const sh = shipments[0];
-  const pr = prs[0];
 
-  if (pr) {
+  // Render ALL PRs as source nodes (not just prs[0]) — handles unconnected PRs
+  prs.forEach((pr, idx) => {
     nodes.push({
       id: `source-${pr.id}`,
       type: 'source',
       col: 1,
-      row: 1,
+      row: idx + 1,
       data: { pr },
     });
-  }
+  });
 
   if (sh) {
+    const shipRow = Math.max(1, Math.ceil(prs.length / 2));
     nodes.push({
       id: `shipment-${sh.id}`,
       type: 'shipment',
       col: 2,
-      row: 1,
+      row: shipRow,
       data: { shipment: sh, stops: stops.filter((s) => s.shipmentId === sh.id) },
     });
   }
 
+  const destRow = Math.max(1, Math.ceil(prs.length / 2));
   nodes.push({
     id: 'destination',
     type: 'destination',
     col: 3,
-    row: 1,
+    row: destRow,
     data: { destination: load.destination },
   });
 
-  if (pr && sh) {
-    const pickupStop = stops.find((s) => s.shipmentId === sh.id && s.type === 'PICKUP' && s.prId === pr.id);
-    const qty = pickupStop
-      ? pickupStop.plannedItems.reduce((s, i) => s + i.qty, 0)
-      : pr.materials.reduce((s, m) => s + m.plannedQty, 0);
-    edges.push({
-      id: `edge-source-${pr.id}-ship-${sh.id}`,
-      fromNodeId: `source-${pr.id}`,
-      toNodeId: `shipment-${sh.id}`,
-      label: `${(qty / 1000).toFixed(1)}T`,
-      status: edgeStatus(sh),
-      stopId: pickupStop?.id,
-      prId: pr.id,
-      shipmentId: sh.id,
-      stopType: 'PICKUP',
+  // Edges for ALL PRs that have PICKUP stops on this shipment
+  if (sh) {
+    prs.forEach((pr) => {
+      const pickupStop = stops.find((s) => s.shipmentId === sh.id && s.type === 'PICKUP' && s.prId === pr.id);
+      if (pickupStop) {
+        const qty = pickupStop.plannedItems.reduce((s, i) => s + i.qty, 0);
+        edges.push({
+          id: `edge-source-${pr.id}-ship-${sh.id}`,
+          fromNodeId: `source-${pr.id}`,
+          toNodeId: `shipment-${sh.id}`,
+          label: `${(qty / 1000).toFixed(1)}T`,
+          status: edgeStatus(sh),
+          stopId: pickupStop.id,
+          prId: pr.id,
+          shipmentId: sh.id,
+          stopType: 'PICKUP',
+        });
+      }
     });
   }
 
@@ -120,7 +125,7 @@ function layoutDirect(
     }
   }
 
-  return { nodes, edges, columns: 3, maxRows: 1 };
+  return { nodes, edges, columns: 3, maxRows: Math.max(prs.length, 1) };
 }
 
 /**
