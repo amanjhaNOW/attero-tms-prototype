@@ -230,60 +230,70 @@ function layoutMultiVehicle(
 ): FlowLayoutResult {
   const nodes: FlowNodeData[] = [];
   const edges: FlowEdgeData[] = [];
-  const pr = prs[0];
+  const sourceCount = prs.length || 1;
   const shipCount = shipments.length || 1;
-  const sourceRow = Math.ceil(shipCount / 2);
+  const maxRows = Math.max(sourceCount, shipCount);
 
-  // Source node centered
-  if (pr) {
+  // ALL source nodes stacked vertically
+  prs.forEach((pr, idx) => {
     nodes.push({
       id: `source-${pr.id}`,
       type: 'source',
       col: 1,
-      row: sourceRow,
+      row: idx + 1,
       data: { pr },
     });
-  }
+  });
 
-  // Shipment nodes stacked
+  // Shipment nodes stacked (centered if fewer than sources)
   shipments.forEach((sh, idx) => {
+    const shipRow = shipments.length < sourceCount
+      ? idx + 1 + Math.floor((sourceCount - shipCount) / 2)
+      : idx + 1;
     nodes.push({
       id: `shipment-${sh.id}`,
       type: 'shipment',
       col: 2,
-      row: idx + 1,
+      row: Math.max(1, shipRow),
       data: { shipment: sh, stops: stops.filter((s) => s.shipmentId === sh.id) },
     });
   });
 
   // Destination centered
+  const destRow = Math.ceil(maxRows / 2);
   nodes.push({
     id: 'destination',
     type: 'destination',
     col: 3,
-    row: sourceRow,
+    row: destRow,
     data: { destination: load.destination },
   });
 
-  // Edges: source → each shipment, each shipment → destination
+  // Edges: each source → each shipment that has a PICKUP for that PR
+  prs.forEach((pr) => {
+    shipments.forEach((sh) => {
+      const pickupStop = stops.find(
+        (s) => s.shipmentId === sh.id && s.type === 'PICKUP' && s.prId === pr.id,
+      );
+      if (pickupStop) {
+        const qty = pickupStop.plannedItems.reduce((sum, i) => sum + i.qty, 0);
+        edges.push({
+          id: `edge-source-${pr.id}-ship-${sh.id}`,
+          fromNodeId: `source-${pr.id}`,
+          toNodeId: `shipment-${sh.id}`,
+          label: qty > 0 ? `${(qty / 1000).toFixed(1)}T` : undefined,
+          status: edgeStatus(sh),
+          stopId: pickupStop.id,
+          prId: pr.id,
+          shipmentId: sh.id,
+          stopType: 'PICKUP',
+        });
+      }
+    });
+  });
+
+  // Each shipment → destination
   shipments.forEach((sh) => {
-    if (pr) {
-      const pickupStop = stops.find((s) => s.shipmentId === sh.id && s.type === 'PICKUP');
-      const qty = pickupStop
-        ? pickupStop.plannedItems.reduce((s, i) => s + i.qty, 0)
-        : 0;
-      edges.push({
-        id: `edge-source-${pr.id}-ship-${sh.id}`,
-        fromNodeId: `source-${pr.id}`,
-        toNodeId: `shipment-${sh.id}`,
-        label: qty > 0 ? `${(qty / 1000).toFixed(1)}T` : undefined,
-        status: edgeStatus(sh),
-        stopId: pickupStop?.id,
-        prId: pr.id,
-        shipmentId: sh.id,
-        stopType: 'PICKUP',
-      });
-    }
     const deliverStop = stops.find((s) => s.shipmentId === sh.id && s.type === 'DELIVER');
     if (deliverStop) {
       edges.push({
@@ -298,7 +308,7 @@ function layoutMultiVehicle(
     }
   });
 
-  return { nodes, edges, columns: 3, maxRows: Math.max(shipCount, 1) };
+  return { nodes, edges, columns: 3, maxRows: Math.max(maxRows, 1) };
 }
 
 /**
